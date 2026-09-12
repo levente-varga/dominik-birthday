@@ -1534,6 +1534,8 @@ void main() {
     final pauseButtonSize = tester.getSize(pauseButtonFinder);
     expect(pauseButtonSize.height, equals(mineCounterSize.height));
     expect(pauseButtonSize.width, equals(pauseButtonSize.height));
+    // Mine counter badge fits its content rather than stretching across the entire available half-width
+    expect(mineCounterSize.width, lessThan((panelRect.width - minimapRect.width) / 2));
 
     // Tapping pause button triggers callback
     await tester.tap(pauseButtonFinder);
