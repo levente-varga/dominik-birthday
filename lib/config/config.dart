@@ -131,6 +131,12 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Duration for newly unlocked regions to fade in
   static const Duration regionUnlockFadeDuration = Duration(milliseconds: 350);
 
+  /// Whether the game world is infinite and generates regions procedurally on discovery
+  static const bool isInfiniteWorld = true;
+
+  /// Number of cleared regions required to win / complete the stage in Run mode
+  static const int regionsToWin = 1;
+
   const MinesweeperConfig() : super(icon: Icons.brightness_7_rounded);
 }
 

@@ -1963,6 +1963,140 @@ void main() {
       equals(BorderRadius.circular(30.0)),
     );
   });
+
+  testWidgets('Infinite world allows navigation beyond 5x5 bounds in all directions', (tester) async {
+    final game = MinesweeperGame(lockInaccessibleRegions: false);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Start at Sector [3, 3]
+    expect(activeSector(3, 3), findsOneWidget);
+
+    // Navigate East 4 times -> reaches Sector [7, 3] (beyond old 5x5 bounds)
+    for (int i = 0; i < 4; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.pumpAndSettle();
+    }
+    expect(activeSector(7, 3), findsOneWidget);
+
+    // Navigate North 4 times -> reaches Sector [7, -1] (negative row coordinate)
+    for (int i = 0; i < 4; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+      await tester.pumpAndSettle();
+    }
+    expect(activeSector(7, -1), findsOneWidget);
+
+    // Navigate West 8 times -> reaches Sector [-1, -1] (negative col coordinate)
+    for (int i = 0; i < 8; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.pumpAndSettle();
+    }
+    expect(activeSector(-1, -1), findsOneWidget);
+  });
+
+  testWidgets('Revealing a border cell dynamically discovers and unlocks regions beyond old 5x5 bounds', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: true,
+      initialRegionX: 4, // Col 4 (Sector [5, 3] - eastern edge of old 5x5 world)
+      initialRegionY: 2,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(activeSector(5, 3), findsOneWidget);
+
+    // Sector [6, 3] (Col 5) is outside old bounds and initially locked
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    await tester.pumpAndSettle();
+    // Cannot move into locked Sector [6, 3]
+    expect(activeSector(5, 3), findsOneWidget);
+
+    // Reveal an eastern border cell in Sector [5, 3] (localCol = 6, e.g. center row localRow = 3)
+    final activeCells = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    );
+    final eastBorderCell = activeCells.at(3 * MinesweeperConfig.regionCols + (MinesweeperConfig.regionCols - 1));
+    await tester.tap(eastBorderCell);
+    await tester.pumpAndSettle();
+
+    // Now Sector [6, 3] is discovered and unlocked!
+    // We can navigate into Sector [6, 3]!
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    await tester.pumpAndSettle();
+    expect(activeSector(6, 3), findsOneWidget);
+  });
+
+  testWidgets('Clearing a region completes stage in infinite world when regionsToWin is 1', (tester) async {
+    bool stageCompleted = false;
+
+    final game = MinesweeperGame(
+      regionsToWin: 1,
+      mineDensity: 0.0, // Zero mines for deterministic instant clear
+      lockInaccessibleRegions: false,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {
+                stageCompleted = true;
+              },
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Tap first cell in region (with 0 mines, flood fill reveals all 49 cells)
+    final firstActiveCell = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    ).first;
+
+    await tester.tap(firstActiveCell);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 700));
+
+    // With all safe cells revealed and 0 mines to flag, region is cleared and onComplete triggers
+    expect(stageCompleted, isTrue);
+  });
 }
 
 
