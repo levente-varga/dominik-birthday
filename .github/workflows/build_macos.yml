@@ -1,0 +1,48 @@
+name: Build macOS App
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Embed and Obfuscate Assets
+        run: dart run tools/embed_assets.dart
+
+      - name: Build macOS application
+        run: flutter build macos --release
+
+      - name: Package macOS App
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r -y ../../../../../Laci-macOS.zip Laci.app
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Laci-macOS-Release
+          path: Laci-macOS.zip
+          retention-days: 30
