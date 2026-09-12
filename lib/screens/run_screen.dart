@@ -5,11 +5,10 @@ import '../game_registry.dart';
 import '../game_state.dart';
 import '../widgets/anomaly_background.dart';
 
-/// The game loop controller screen.
+/// The game loop controller screen for Minesweeper.
 ///
-/// Iterates through stages 1..[currentRun] within a single run.
-/// On game completion → advance to next stage or navigate to
-/// run-complete screen. On game failure → navigate to death screen.
+/// Runs the infinite Minesweeper world.
+/// On game failure → returns directly to the main menu.
 class RunScreen extends StatefulWidget {
   final GameStateManager gameState;
 
@@ -54,7 +53,7 @@ class _RunScreenState extends State<RunScreen>
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && ModalRoute.of(context)?.isCurrent == true) {
-          Navigator.of(context).pushReplacementNamed('/death');
+          Navigator.of(context).popUntil((route) => route.isFirst);
         }
       });
     }
@@ -127,28 +126,11 @@ class _RunScreenState extends State<RunScreen>
       _isTransitioning = true;
     });
 
-    // Immediately record the game win, awards, tokens, and achievements.
-    // If this is the final stage of the run, this stops the timer IMMEDIATELY!
-    final runComplete = _gs.completeCurrentGame();
+    _gs.completeCurrentGame();
 
     _fadeController.forward().then((_) {
       if (!mounted) return;
-
-      if (runComplete) {
-        // Navigate to run-complete screen, replacing this screen.
-        Navigator.of(context).pushReplacementNamed('/run-complete');
-      } else {
-        if (_gs.isRunActive) {
-          _gs.advanceToNextStage();
-          _fadeController.reverse().then((_) {
-            if (mounted) {
-              setState(() {
-                _isTransitioning = false;
-              });
-            }
-          });
-        }
-      }
+      Navigator.of(context).popUntil((route) => route.isFirst);
     });
   }
 
@@ -159,8 +141,8 @@ class _RunScreenState extends State<RunScreen>
     });
     _gs.failGame();
     if (mounted) {
-      // Navigate to death screen, replacing this screen.
-      Navigator.of(context).pushReplacementNamed('/death');
+      // Return directly to the main menu
+      Navigator.of(context).popUntil((route) => route.isFirst);
     }
   }
 }

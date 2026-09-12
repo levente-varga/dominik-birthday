@@ -279,7 +279,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   int _flagCount = 0;
   int _correctlyFlaggedMines = 0;
   int _totalFlagsPlacedInSession = 0;
-  int _clearedRegionsCount = 0;
   late int _actualMineCount;
 
   // Active shockwave animations
@@ -1084,7 +1083,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
       if (allSafeRevealed && allMinesFlagged) {
         currentRegion.isCleared = true;
-        _clearedRegionsCount++;
+        if (!_hasMisplacedFlag) {
+          widget.gameState.recordFlawlessMinesweeperWin();
+        }
       }
     }
 
@@ -1102,16 +1103,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
           AchievementStatus.unlocked,
         );
       }
-    }
-
-    if (_clearedRegionsCount >= widget.regionsToWin) {
-      _gameWon = true;
-      if (!_hasMisplacedFlag) {
-        widget.gameState.recordFlawlessMinesweeperWin();
-      }
-      Future.delayed(BaseGameConfig.winTransitionDelay, () {
-        if (mounted) widget.onComplete();
-      });
     }
   }
 

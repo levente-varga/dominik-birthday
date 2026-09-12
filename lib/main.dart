@@ -6,9 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'game_state.dart';
 import 'save_system.dart';
-import 'screens/death_screen.dart';
 import 'screens/main_menu_screen.dart';
-import 'screens/run_complete_screen.dart';
 import 'screens/run_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/statistics_screen.dart';
@@ -172,8 +170,6 @@ class BirthdayGauntletApp extends StatelessWidget {
           ),
           '/menu' => MainMenuScreen(gameState: gameState),
           '/run' => RunScreen(gameState: gameState),
-          '/death' => DeathScreen(gameState: gameState),
-          '/run-complete' => RunCompleteScreen(gameState: gameState),
           '/statistics' => StatisticsScreen(gameState: gameState),
           '/practice' => TestStageScreen(
             stageNumber:

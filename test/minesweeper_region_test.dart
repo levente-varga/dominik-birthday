@@ -2058,11 +2058,10 @@ void main() {
     expect(activeSector(6, 3), findsOneWidget);
   });
 
-  testWidgets('Clearing a region completes stage in infinite world when regionsToWin is 1', (tester) async {
+  testWidgets('Clearing a region marks it cleared but does not complete stage in infinite world', (tester) async {
     bool stageCompleted = false;
 
     final game = MinesweeperGame(
-      regionsToWin: 1,
       mineDensity: 0.0, // Zero mines for deterministic instant clear
       lockInaccessibleRegions: false,
     );
@@ -2096,8 +2095,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 700));
 
-    // With all safe cells revealed and 0 mines to flag, region is cleared and onComplete triggers
-    expect(stageCompleted, isTrue);
+    // In infinite world, clearing a region never ends the stage; onComplete is NOT triggered
+    expect(stageCompleted, isFalse);
   });
 
   testWidgets(
