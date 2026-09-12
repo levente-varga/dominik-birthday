@@ -104,6 +104,17 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Touch navigation swipe settings
   static const double swipeThreshold = 80.0;
 
+  /// Minimum drag distance required before the map begins translating (default 10.0)
+  static const double dragMinThreshold = 10.0;
+
+  /// Number of sectors displayed across the minimap (7x7 sector window)
+  static const int minimapSize = 7;
+  static const int minimapCols = 7;
+  static const int minimapRows = 7;
+
+  /// Duration for candidate region fade-in and fade-out cross-fade transitions
+  static const Duration candidateFadeDuration = Duration(milliseconds: 200);
+
   /// Duration required to place or remove a flag via long tap
   static const Duration longTapDuration = Duration(milliseconds: 250);
 

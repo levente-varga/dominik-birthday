@@ -51,6 +51,7 @@ class MinesweeperGame extends Game {
   final bool? lockInaccessibleRegions;
   final Duration? regionUnlockFadeDuration;
   final double? swipeThreshold;
+  final double? dragMinThreshold;
   final int? regionsToWin;
   final bool? isInfiniteWorld;
   final int? initialRegionX;
@@ -77,6 +78,7 @@ class MinesweeperGame extends Game {
     this.lockInaccessibleRegions,
     this.regionUnlockFadeDuration,
     this.swipeThreshold,
+    this.dragMinThreshold,
     this.regionsToWin,
     this.isInfiniteWorld,
     this.initialRegionX,
@@ -112,6 +114,7 @@ class MinesweeperGame extends Game {
       initialRegionX: initialRegionX ?? MinesweeperConfig.initialRegionX,
       initialRegionY: initialRegionY ?? MinesweeperConfig.initialRegionY,
       swipeThreshold: swipeThreshold ?? MinesweeperConfig.swipeThreshold,
+      dragMinThreshold: dragMinThreshold ?? MinesweeperConfig.dragMinThreshold,
       panelGap: panelGap ?? MinesweeperConfig.panelGap,
       panelCornerRadius: panelCornerRadius ??
           regionPanelCornerRadius ??
@@ -195,6 +198,7 @@ class _MinesweeperGame extends StatefulWidget {
   final int initialRegionX;
   final int initialRegionY;
   final double swipeThreshold;
+  final double dragMinThreshold;
   final double panelGap;
   final double panelCornerRadius;
   final double boardPadding;
@@ -228,6 +232,7 @@ class _MinesweeperGame extends StatefulWidget {
     required this.initialRegionX,
     required this.initialRegionY,
     this.swipeThreshold = MinesweeperConfig.swipeThreshold,
+    this.dragMinThreshold = MinesweeperConfig.dragMinThreshold,
     this.panelGap = MinesweeperConfig.panelGap,
     this.panelCornerRadius = MinesweeperConfig.panelCornerRadius,
     this.boardPadding = MinesweeperConfig.boardPadding,
@@ -289,11 +294,57 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   // ── Swipe & Multi-Panel Transition State ─────────────────────────────────
   late final AnimationController _slideController;
-  late final AnimationController _fadeController;
-  late final Animation<double> _fadeAnimation;
+  final Map<(int, int), AnimationController> _candidateFadeControllers = {};
+  final Map<(int, int), Animation<double>> _candidateFadeAnimations = {};
   Animation<Offset>? _offsetAnimation;
   Animation<double>? _progressAnimation;
   Animation<double>? _gradientAnimation;
+
+  AnimationController _getCandidateFadeController((int, int) dir) {
+    var controller = _candidateFadeControllers[dir];
+    if (controller == null) {
+      controller = AnimationController(
+        vsync: this,
+        duration: MinesweeperConfig.candidateFadeDuration,
+      );
+      final animation = CurvedAnimation(
+        parent: controller,
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeOut,
+      );
+      controller.addListener(() {
+        if (mounted) setState(() {});
+      });
+      _candidateFadeControllers[dir] = controller;
+      _candidateFadeAnimations[dir] = animation;
+    }
+    return controller;
+  }
+
+  void _updateCandidateFade({(int, int)? activeDirection}) {
+    if (activeDirection != null) {
+      _getCandidateFadeController(activeDirection).forward();
+    }
+    for (final entry in _candidateFadeControllers.entries) {
+      if (entry.key != activeDirection) {
+        entry.value.reverse();
+      }
+    }
+  }
+
+  void _resetCandidateFade() {
+    for (final controller in _candidateFadeControllers.values) {
+      controller.stop();
+      controller.value = 0.0;
+    }
+  }
+
+  bool get _isCandidateFading {
+    for (final ctrl in _candidateFadeControllers.values) {
+      if (ctrl.isAnimating) return true;
+    }
+    return false;
+  }
 
   Offset _planeOffset = Offset.zero;
   double _transitionProgress = 0.0;
@@ -316,6 +367,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       _slideController.isAnimating ||
       _planeOffset != Offset.zero ||
       _transitionProgress > 0.0 ||
+      _isCandidateFading ||
       _swipeDRow != 0 ||
       _swipeDCol != 0;
 
@@ -454,23 +506,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         }
       });
     });
-
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-    _fadeAnimation = CurvedAnimation(
-      parent: _fadeController,
-      curve: Curves.easeOut,
-    );
-    _fadeController.addListener(() {
-      setState(() {
-        if (!_slideController.isAnimating) {
-          _transitionProgress = _fadeAnimation.value;
-          _gradientProgress = _fadeAnimation.value;
-        }
-      });
-    });
   }
 
   @override
@@ -482,7 +517,11 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _unlockAnimations.clear();
     _focusNode.dispose();
     _shockwaveLayerController.dispose();
-    _fadeController.dispose();
+    for (final controller in _candidateFadeControllers.values) {
+      controller.dispose();
+    }
+    _candidateFadeControllers.clear();
+    _candidateFadeAnimations.clear();
     _slideController.dispose();
     super.dispose();
   }
@@ -1153,13 +1192,16 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   // ── Swipe Gestures & Region Navigation ────────────────────────────────────
 
-  Offset _applyEaseOutOffset(Offset delta, bool canMove) {
-    final distance = delta.distance;
-    if (distance <= 0.0) return Offset.zero;
+  Offset _applyEaseOutOffset(
+    Offset delta,
+    double effectiveDistance,
+    bool canMove,
+  ) {
+    if (effectiveDistance <= 0.0 || delta.distance <= 0.0) return Offset.zero;
     final maxVisualDelta = canMove ? 100.0 : 35.0;
     final visualDistance =
-        maxVisualDelta * (1.0 - exp(-distance / (maxVisualDelta * 1.5)));
-    return (delta / distance) * visualDistance;
+        maxVisualDelta * (1.0 - exp(-effectiveDistance / (maxVisualDelta * 1.5)));
+    return (delta / delta.distance) * visualDistance;
   }
 
   /// Determines the (dRow, dCol) transition direction by dividing the 2D plane
@@ -1194,7 +1236,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
     _slideController.stop();
-    _fadeController.stop();
+    _resetCandidateFade();
     if (_isTransitioning &&
         _targetTransitionRow != null &&
         _targetTransitionCol != null) {
@@ -1210,7 +1252,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _targetTransitionRow = null;
     _targetTransitionCol = null;
     _planeOffset = Offset.zero;
-    _fadeController.value = 0.0;
     _transitionProgress = 0.0;
     _gradientProgress = 0.0;
     _offsetAnimation = null;
@@ -1234,8 +1275,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragExceededTapSlop = false;
     _isThresholdFlipped = false;
     _slideController.stop();
-    _fadeController.stop();
-    _fadeController.value = 0.0;
+    _resetCandidateFade();
   }
 
   void _onPointerMove(PointerMoveEvent event) {
@@ -1249,54 +1289,59 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final distance = delta.distance;
 
-    if (distance > 4.0) {
-      final (dRow, dCol) = _get8SliceDirection(delta);
-
-      final targetRow = _currentRegionRow + dRow;
-      final targetCol = _currentRegionCol + dCol;
-      final canTransition = (dRow != 0 || dCol != 0) &&
-          _isRegionAccessible(targetRow, targetCol);
-
-      final visualOffset = _applyEaseOutOffset(delta, canTransition);
-
-      final isOverThreshold =
-          canTransition && distance >= widget.swipeThreshold;
-
-      if (isOverThreshold) {
-        if (!_isThresholdFlipped || _swipeDRow != dRow || _swipeDCol != dCol) {
-          _isThresholdFlipped = true;
-          _swipeDRow = dRow;
-          _swipeDCol = dCol;
-          _fadeController.forward();
-        }
-      } else {
-        if (_isThresholdFlipped) {
-          _isThresholdFlipped = false;
-          _fadeController.reverse();
-        }
-        if (canTransition) {
-          _swipeDRow = dRow;
-          _swipeDCol = dCol;
-        } else {
-          _swipeDRow = 0;
-          _swipeDCol = 0;
-        }
+    if (distance < widget.dragMinThreshold) {
+      if (_planeOffset != Offset.zero) {
+        setState(() {
+          _planeOffset = Offset.zero;
+        });
       }
+      if (_isThresholdFlipped) {
+        _isThresholdFlipped = false;
+        _updateCandidateFade(activeDirection: null);
+      }
+      _swipeDRow = 0;
+      _swipeDCol = 0;
+      return;
+    }
 
-      setState(() {
-        _planeOffset = visualOffset;
-      });
+    final effectiveDistance = distance - widget.dragMinThreshold;
+    final (dRow, dCol) = _get8SliceDirection(delta);
+
+    final targetRow = _currentRegionRow + dRow;
+    final targetCol = _currentRegionCol + dCol;
+    final canTransition = (dRow != 0 || dCol != 0) &&
+        _isRegionAccessible(targetRow, targetCol);
+
+    final visualOffset =
+        _applyEaseOutOffset(delta, effectiveDistance, canTransition);
+
+    final isOverThreshold =
+        canTransition && distance >= widget.swipeThreshold;
+
+    if (isOverThreshold) {
+      if (!_isThresholdFlipped || _swipeDRow != dRow || _swipeDCol != dCol) {
+        _isThresholdFlipped = true;
+        _swipeDRow = dRow;
+        _swipeDCol = dCol;
+        _updateCandidateFade(activeDirection: (dRow, dCol));
+      }
     } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
-        _fadeController.reverse();
+        _updateCandidateFade(activeDirection: null);
       }
-      setState(() {
-        _planeOffset = delta;
+      if (canTransition) {
+        _swipeDRow = dRow;
+        _swipeDCol = dCol;
+      } else {
         _swipeDRow = 0;
         _swipeDCol = 0;
-      });
+      }
     }
+
+    setState(() {
+      _planeOffset = visualOffset;
+    });
   }
 
   void _onPointerUp(PointerUpEvent event) {
@@ -1321,7 +1366,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
-        _fadeController.reverse();
+        _updateCandidateFade(activeDirection: null);
       }
       _animateSnapBack();
     }
@@ -1332,7 +1377,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragStartPos = null;
     if (_isThresholdFlipped) {
       _isThresholdFlipped = false;
-      _fadeController.reverse();
+      _updateCandidateFade(activeDirection: null);
     }
     _animateSnapBack();
   }
@@ -1340,7 +1385,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void _animateSnapBack() {
     _slideController.stop();
     _isThresholdFlipped = false;
-    _fadeController.reverse();
+    _updateCandidateFade(activeDirection: null);
     setState(() {
       _targetTransitionRow = null;
       _targetTransitionCol = null;
@@ -1356,6 +1401,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _swipeDCol = 0;
         _transitionProgress = 0.0;
         _gradientProgress = 0.0;
+        _resetCandidateFade();
       });
       return;
     }
@@ -1392,7 +1438,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       if (!mounted || _transitionGeneration != gen) return;
       setState(() {
         _planeOffset = Offset.zero;
-        _fadeController.value = 0.0;
         _transitionProgress = 0.0;
         _gradientProgress = 0.0;
         _offsetAnimation = null;
@@ -1401,6 +1446,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _isThresholdFlipped = false;
         _swipeDRow = 0;
         _swipeDCol = 0;
+        _resetCandidateFade();
       });
     }).catchError((_) {});
   }
@@ -1418,8 +1464,18 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _targetTransitionRow = targetRow;
     _targetTransitionCol = targetCol;
     _slideController.stop();
-    _fadeController.stop();
-    _fadeController.value = 1.0;
+
+    final targetCtrl = _getCandidateFadeController((dRow, dCol));
+    targetCtrl.stop();
+    targetCtrl.value = 1.0;
+    for (final entry in _candidateFadeControllers.entries) {
+      if (entry.key != (dRow, dCol)) {
+        entry.value.stop();
+        entry.value.value = 0.0;
+      }
+    }
+    _transitionProgress = 1.0;
+    _gradientProgress = 1.0;
 
     const double totalTileSize =
         MinesweeperConfig.cellSize + MinesweeperConfig.cellGap;
@@ -1444,7 +1500,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       ),
     );
     _progressAnimation = Tween<double>(
-      begin: _transitionProgress,
+      begin: 1.0,
       end: 1.0,
     ).animate(
       CurvedAnimation(
@@ -1453,7 +1509,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       ),
     );
     _gradientAnimation = Tween<double>(
-      begin: _gradientProgress,
+      begin: 1.0,
       end: 1.0,
     ).animate(
       CurvedAnimation(
@@ -1478,7 +1534,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _targetTransitionRow = null;
         _targetTransitionCol = null;
         _planeOffset = Offset.zero;
-        _fadeController.value = 0.0;
         _transitionProgress = 0.0;
         _gradientProgress = 0.0;
         _gradientAnimation = null;
@@ -1488,6 +1543,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _swipeDRow = 0;
         _swipeDCol = 0;
         _isTransitioning = false;
+        _resetCandidateFade();
       });
     }).catchError((_) {});
   }
@@ -1637,19 +1693,30 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final neighborBaseOpacity =
         (1.0 - widget.neighborRegionTransparency).clamp(0.0, 1.0);
-    final p = _transitionProgress.clamp(0.0, 1.0);
-    final isTransition = _swipeDRow != 0 || _swipeDCol != 0;
 
     double panelOpacity;
-    if (dr == 0 && dc == 0) {
-      // Current region: start at 0% transparency (1.0 opacity) and fade to 50% transparency (neighborBaseOpacity)
-      panelOpacity = 1.0 - (p * (1.0 - neighborBaseOpacity));
-    } else if (isTransition && dr == _swipeDRow && dc == _swipeDCol) {
-      // Potential new selected region: start at 50% transparency (neighborBaseOpacity) and fade to 0% transparency (1.0 opacity)
-      panelOpacity = neighborBaseOpacity + (p * (1.0 - neighborBaseOpacity));
+    if (_slideController.isAnimating) {
+      final p = _transitionProgress.clamp(0.0, 1.0);
+      if (dr == 0 && dc == 0) {
+        panelOpacity = 1.0 - (p * (1.0 - neighborBaseOpacity));
+      } else if (dr == _swipeDRow && dc == _swipeDCol) {
+        panelOpacity = neighborBaseOpacity + (p * (1.0 - neighborBaseOpacity));
+      } else {
+        panelOpacity = neighborBaseOpacity;
+      }
+    } else if (dr == 0 && dc == 0) {
+      double maxCandidate = 0.0;
+      for (final anim in _candidateFadeAnimations.values) {
+        if (anim.value > maxCandidate) {
+          maxCandidate = anim.value;
+        }
+      }
+      panelOpacity = 1.0 - (maxCandidate * (1.0 - neighborBaseOpacity));
     } else {
-      // Neighbor regions: 50% transparency (neighborBaseOpacity)
-      panelOpacity = neighborBaseOpacity;
+      final candidateAnim = _candidateFadeAnimations[(dr, dc)];
+      final candidateProgress = candidateAnim?.value ?? 0.0;
+      panelOpacity =
+          neighborBaseOpacity + (candidateProgress * (1.0 - neighborBaseOpacity));
     }
 
     final unlockFade = _unlockAnimations[(regionRow, regionCol)]?.value ?? 1.0;
@@ -2227,6 +2294,8 @@ class _RegionPauseButton extends StatelessWidget {
 class RegionMiniMapSelector extends StatefulWidget {
   final int regionsX;
   final int regionsY;
+  final int minimapCols;
+  final int minimapRows;
   final int currentRegionRow;
   final int currentRegionCol;
   final int? selectedRegionRow;
@@ -2250,6 +2319,8 @@ class RegionMiniMapSelector extends StatefulWidget {
     super.key,
     required this.regionsX,
     required this.regionsY,
+    this.minimapCols = MinesweeperConfig.minimapCols,
+    this.minimapRows = MinesweeperConfig.minimapRows,
     required this.currentRegionRow,
     required this.currentRegionCol,
     this.selectedRegionRow,
@@ -2327,8 +2398,8 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
 
   @override
   Widget build(BuildContext context) {
-    final viewportWidth = widget.regionsX * 10.0;
-    final viewportHeight = widget.regionsY * 10.0;
+    final viewportWidth = widget.minimapCols * 10.0;
+    final viewportHeight = widget.minimapRows * 10.0;
     final centerX = viewportWidth / 2.0;
     final centerY = viewportHeight / 2.0;
 
@@ -2349,10 +2420,12 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
     final overlayLeft = mapLeft + (sectorPos.dx * 10.0) + 1.0;
     final overlayTop = mapTop + (sectorPos.dy * 10.0) + 1.0;
 
-    final minCol = min(0, widget.currentRegionCol - 3);
-    final maxCol = max(widget.regionsX - 1, widget.currentRegionCol + 3);
-    final minRow = min(0, widget.currentRegionRow - 3);
-    final maxRow = max(widget.regionsY - 1, widget.currentRegionRow + 3);
+    final halfVisibleCols = (widget.minimapCols / 2).ceil();
+    final halfVisibleRows = (widget.minimapRows / 2).ceil();
+    final minCol = widget.currentRegionCol - halfVisibleCols;
+    final maxCol = widget.currentRegionCol + halfVisibleCols;
+    final minRow = widget.currentRegionRow - halfVisibleRows;
+    final maxRow = widget.currentRegionRow + halfVisibleRows;
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,

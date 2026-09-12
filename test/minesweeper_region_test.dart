@@ -2346,6 +2346,14 @@ void main() {
     expect(sectorColor(4, 4), equals(Colors.transparent));
 
     // 2. Reveal Bottom-Right corner tile (index 48, row 6, col 6)
+    final state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    ) as dynamic;
+    final region = state.regions[(2, 2)];
+    if (region.mines[48] == 1) {
+      region.mines[48] = 0;
+      region.mines[24] = 1;
+    }
     final bottomRightCell = mainCells.at(48);
     await tester.tap(bottomRightCell);
     await tester.pumpAndSettle();
@@ -2472,6 +2480,155 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(activeSector(4, 4), findsOneWidget);
+  });
+
+  testWidgets('Minimap displays 7x7 sector viewport (70x70px)', (tester) async {
+    final game = MinesweeperGame(lockInaccessibleRegions: false);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Verify 70x70px viewport in RegionMiniMapSelector
+    final minimapSizedBoxFinder = find.descendant(
+      of: find.byKey(const ValueKey('minimap_selector')),
+      matching: find.byType(SizedBox),
+    ).first;
+    final minimapSizedBox = tester.widget<SizedBox>(minimapSizedBoxFinder);
+    expect(minimapSizedBox.width, equals(70.0));
+    expect(minimapSizedBox.height, equals(70.0));
+
+    // Verify 7x7 sector window cells exist centered around [3, 3]
+    expect(find.byKey(const ValueKey('minimap_sector_0_0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('minimap_sector_3_3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('minimap_sector_6_6')), findsOneWidget);
+  });
+
+  testWidgets('Dragging does not move map until dragMinThreshold is exceeded', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: false,
+      swipeThreshold: 64.0,
+      dragMinThreshold: 10.0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    final initialPanelRect = tester.getRect(centerPanelFinder);
+
+    // 1. Drag under dragMinThreshold (distance = 5.0px < 10.0px)
+    final gesture = await tester.startGesture(const Offset(250, 250));
+    await gesture.moveBy(const Offset(-5, 0));
+    await tester.pump();
+
+    // Panel must NOT have moved at all
+    final underThresholdRect = tester.getRect(centerPanelFinder);
+    expect(underThresholdRect.left, equals(initialPanelRect.left));
+
+    // Move slightly more to 9.0px total (< 10.0px)
+    await gesture.moveBy(const Offset(-4, 0));
+    await tester.pump();
+    final at9pxRect = tester.getRect(centerPanelFinder);
+    expect(at9pxRect.left, equals(initialPanelRect.left));
+
+    // 2. Drag exceeds dragMinThreshold (move -6px further, total distance 15.0px > 10.0px)
+    await gesture.moveBy(const Offset(-6, 0));
+    await tester.pump();
+    final pastThresholdRect = tester.getRect(centerPanelFinder);
+    expect(pastThresholdRect.left, lessThan(initialPanelRect.left));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('Mid-drag traversal target switching cross-fades opacities smoothly via ease-out', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: false,
+      swipeThreshold: 64.0,
+      dragMinThreshold: 10.0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 1. Drag past swipeThreshold towards East (Offset(-70, 0))
+    final gesture = await tester.startGesture(const Offset(250, 250));
+    await gesture.moveBy(const Offset(-70, 0));
+    await tester.pump();
+    // Allow East fade-in to complete
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final eastPanelFinder = find.byKey(const ValueKey('region_panel_0_1'));
+    final sePanelFinder = find.byKey(const ValueKey('region_panel_1_1'));
+
+    double getOpacity(Finder f) => tester.widget<Opacity>(
+      find.descendant(of: f, matching: find.byType(Opacity)).first,
+    ).opacity;
+
+    expect(getOpacity(eastPanelFinder), equals(1.0));
+    expect(getOpacity(sePanelFinder), equals(0.50));
+
+    // 2. Switch mid-drag to South-East without lifting pointer (dx = -50, dy = -50, dist ~70.7 > 64)
+    // Relative move from (-70, 0) to (-50, -50): moveBy(Offset(20, -50))
+    await gesture.moveBy(const Offset(20, -50));
+    await tester.pump();
+
+    // After 50ms mid-animation, neither target should have snapped in 1 frame
+    await tester.pump(const Duration(milliseconds: 50));
+    final eastMid = getOpacity(eastPanelFinder);
+    final seMid = getOpacity(sePanelFinder);
+
+    // Old target (East) is smoothly fading down (between 0.50 and 1.0)
+    expect(eastMid, lessThan(1.0));
+    expect(eastMid, greaterThan(0.50));
+
+    // New target (South-East) is smoothly fading up (between 0.50 and 1.0)
+    expect(seMid, greaterThan(0.50));
+    expect(seMid, lessThan(1.0));
+
+    // After full fade completes (200ms)
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(getOpacity(sePanelFinder), equals(1.0));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
   });
 }
 
