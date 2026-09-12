@@ -1796,10 +1796,10 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       width: panelWidth,
       height: panelHeight,
       child: RepaintBoundary(
-        child: ImageFiltered(
-          imageFilter: ui.ImageFilter.blur(sigmaX: 0.001, sigmaY: 0.001),
-          child: Opacity(
-            opacity: panelOpacity.clamp(0.0, 1.0),
+        child: Opacity(
+          opacity: panelOpacity.clamp(0.0, 1.0),
+          child: ImageFiltered(
+            imageFilter: ui.ImageFilter.matrix(Matrix4.identity().storage),
             child: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -2667,6 +2667,15 @@ class _RegionCellWidget extends StatefulWidget {
     Colors.grey, // 8
   ];
 
+  static final List<TextStyle> _numberTextStyles = List.generate(
+    9,
+    (i) => TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w900,
+      color: _numberColors[i],
+    ),
+  );
+
   @override
   State<_RegionCellWidget> createState() => _RegionCellWidgetState();
 }
@@ -2805,22 +2814,23 @@ class _RegionCellWidgetState extends State<_RegionCellWidget> {
                   )
                 : const BoxDecoration(color: Colors.transparent),
           ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: AnimatedOpacity(
-                key: const ValueKey('cell_touch_highlight'),
-                opacity: shouldHighlight ? 1.0 : 0.0,
-                duration: widget.touchHighlightFadeDuration,
-                curve: Curves.easeOut,
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    color: widget.touchHighlightColor,
+          if (!widget.isNeighbor)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  key: const ValueKey('cell_touch_highlight'),
+                  opacity: shouldHighlight ? 1.0 : 0.0,
+                  duration: widget.touchHighlightFadeDuration,
+                  curve: Curves.easeOut,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: widget.touchHighlightColor,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           if (cntOpt > 0.01)
             Positioned.fill(
               child: IgnorePointer(
@@ -2929,13 +2939,10 @@ class _RegionCellWidgetState extends State<_RegionCellWidget> {
 
     if (widget.cellState == CellState.revealed) {
       if (widget.adjacentMines == 0) return null;
+      final count = widget.adjacentMines.clamp(0, 8);
       return Text(
-        '${widget.adjacentMines}',
-        style: TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w900,
-          color: _RegionCellWidget._numberColors[widget.adjacentMines.clamp(0, 8)],
-        ),
+        '$count',
+        style: _RegionCellWidget._numberTextStyles[count],
       );
     }
 
