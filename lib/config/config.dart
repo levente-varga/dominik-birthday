@@ -72,6 +72,73 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Exact number of mines in each region (uniform across all regions)
   static int get minesPerRegion => (cellsPerRegion * mineDensity).round();
 
+  /// Distance metric used for region distance calculations. Defaults to Chebyshev distance.
+  static const RegionDistanceMetric distanceMetric = RegionDistanceMetric.chebyshev;
+
+  /// Calculates the distance of a region at ([r], [c]) from the starting region at ([startR], [startC]).
+  static int calculateRegionDistance(
+    int r,
+    int c, {
+    int startR = initialRegionY,
+    int startC = initialRegionX,
+    RegionDistanceMetric metric = distanceMetric,
+  }) {
+    final dr = (r - startR).abs();
+    final dc = (c - startC).abs();
+    switch (metric) {
+      case RegionDistanceMetric.chebyshev:
+        return math.max(dr, dc);
+      case RegionDistanceMetric.manhattan:
+        return dr + dc;
+      case RegionDistanceMetric.euclidean:
+        return math.sqrt(dr * dr + dc * dc).round();
+    }
+  }
+
+  /// The exact function that determines the amount of mines relative to the distance.
+  ///
+  /// Linear implementation: default number of mines (from [minesPerRegion] or [baseMines])
+  /// plus an increased amount equal to its distance from the starting region.
+  static int calculateMinesForDistance(
+    int distance, {
+    int? baseMines,
+    int? maxMines,
+  }) {
+    final base = baseMines ?? minesPerRegion;
+    final target = base + distance;
+    final maxAllowed = maxMines ?? (cellsPerRegion - 1);
+    return target.clamp(0, maxAllowed);
+  }
+
+  /// Pluggable function that determines the amount of mines relative to distance.
+  /// Defaults to [calculateMinesForDistance].
+  static int Function(int distance, {int? baseMines, int? maxMines})
+      minesForDistanceFunction = calculateMinesForDistance;
+
+  /// Calculates the number of mines for a region at ([r], [c]) relative to the starting region.
+  static int minesForRegion(
+    int r,
+    int c, {
+    int startR = initialRegionY,
+    int startC = initialRegionX,
+    int? baseMines,
+    int? maxMines,
+    RegionDistanceMetric metric = distanceMetric,
+  }) {
+    final distance = calculateRegionDistance(
+      r,
+      c,
+      startR: startR,
+      startC: startC,
+      metric: metric,
+    );
+    return minesForDistanceFunction(
+      distance,
+      baseMines: baseMines,
+      maxMines: maxMines,
+    );
+  }
+
   /// Total world map dimensions
   static int get worldRows => regionsY * regionRows;
   static int get worldCols => regionsX * regionCols;
@@ -155,6 +222,19 @@ class MinesweeperConfig extends BaseGameConfig {
   static const int regionsToWin = 1;
 
   const MinesweeperConfig() : super(icon: Icons.brightness_7_rounded);
+}
+
+/// Distance metric for calculating region distance from the starting region.
+enum RegionDistanceMetric {
+  /// Chebyshev distance (L-infinity norm): max(|dr|, |dc|).
+  /// Diagonal neighbor regions are 1 step away (matching 8-directional swipe navigation).
+  chebyshev,
+
+  /// Manhattan distance (L1 norm): |dr| + |dc|.
+  manhattan,
+
+  /// Euclidean distance (L2 norm): sqrt(dr^2 + dc^2).
+  euclidean,
 }
 
 /// Style of gradient overlay applied on the game area around the active region.

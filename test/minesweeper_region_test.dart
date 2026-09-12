@@ -447,7 +447,14 @@ void main() {
         MinesweeperConfig.regionRows * MinesweeperConfig.regionCols ~/ 2,
       ),
     );
-    await tester.pumpAndSettle();
+    // Ensure cell 0 is safe before tapping border cell
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    final currentRegion = state.regions[(2, 2)];
+    if (currentRegion != null && currentRegion.mines[0] == 1) {
+      currentRegion.mines[0] = 0;
+    }
 
     // Tap border cell
     await tester.tap(mainPanelCells.first);
@@ -2166,7 +2173,9 @@ void main() {
     }
   });
 
-  testWidgets('All regions have the exact same amount of mines', (tester) async {
+  testWidgets(
+      'Starting region generates with default mines, and other regions scale linearly with distance',
+      (tester) async {
     const targetMines = 8;
     final game = MinesweeperGame(
       minesPerRegion: targetMines,
@@ -2193,7 +2202,11 @@ void main() {
     );
     final Map<(int, int), dynamic> regions = state.regions;
 
-    // Trigger initial click to generate starting region and its 8 neighbors
+    // Verify starting region is marked on the board and on the minimap
+    expect(find.byKey(const ValueKey('starting_region_marker')), findsOneWidget);
+    expect(find.byKey(const ValueKey('minimap_starting_region_marker')), findsOneWidget);
+
+    // Trigger initial click to generate starting region (2, 2) and its 8 neighbors
     final mainCells = find.byWidgetPredicate(
       (widget) =>
           widget.runtimeType.toString() == '_RegionCellWidget' &&
@@ -2202,15 +2215,31 @@ void main() {
     await tester.tap(mainCells.at(24));
     await tester.pumpAndSettle();
 
-    // Verify all generated regions have exactly targetMines
+    // Verify starting region has exactly targetMines (distance 0) and is marked
+    final startRegion = regions[(2, 2)];
+    expect(startRegion, isNotNull);
+    expect(startRegion.isStartingRegion, isTrue);
+    expect(startRegion.mineCount, equals(targetMines));
+    final startMineList = startRegion.mines as List<int>;
+    expect(startMineList.where((m) => m == 1).length, equals(targetMines));
+
+    // Verify all 8 neighbors (at distance 1) have exactly targetMines + 1
     expect(regions.length, greaterThanOrEqualTo(9));
     for (final entry in regions.entries) {
+      if (entry.key == (2, 2)) continue;
       if (entry.value.isGenerated as bool) {
+        final r = entry.key.$1;
+        final c = entry.key.$2;
+        final dist = MinesweeperConfig.calculateRegionDistance(r, c, startR: 2, startC: 2);
+        final expectedMines =
+            MinesweeperConfig.calculateMinesForDistance(dist, baseMines: targetMines);
         final mineList = entry.value.mines as List<int>;
         final count = mineList.where((m) => m == 1).length;
-        expect(count, equals(targetMines),
-            reason: 'Region at ${entry.key} should have exactly $targetMines mines');
-        expect(entry.value.mineCount, equals(targetMines));
+        expect(count, equals(expectedMines),
+            reason:
+                'Region at ${entry.key} (dist $dist) should have exactly $expectedMines mines');
+        expect(entry.value.mineCount, equals(expectedMines));
+        expect(entry.value.isStartingRegion, isFalse);
       }
     }
   });
@@ -2920,6 +2949,48 @@ void main() {
 
     await gesture.up();
     await tester.pumpAndSettle();
+  });
+
+  test('MinesweeperConfig distance and linear mine scaling functions', () {
+    // 1. Distance calculations (Chebyshev default)
+    expect(MinesweeperConfig.calculateRegionDistance(2, 2, startR: 2, startC: 2), equals(0));
+    expect(MinesweeperConfig.calculateRegionDistance(1, 2, startR: 2, startC: 2), equals(1)); // North
+    expect(MinesweeperConfig.calculateRegionDistance(1, 3, startR: 2, startC: 2), equals(1)); // North-East (diagonal)
+    expect(MinesweeperConfig.calculateRegionDistance(0, 4, startR: 2, startC: 2), equals(2));
+    expect(MinesweeperConfig.calculateRegionDistance(-1, 5, startR: 2, startC: 2), equals(3));
+
+    // 2. Manhattan distance option
+    expect(
+      MinesweeperConfig.calculateRegionDistance(
+        1,
+        3,
+        startR: 2,
+        startC: 2,
+        metric: RegionDistanceMetric.manhattan,
+      ),
+      equals(2),
+    );
+
+    // 3. Linear mine calculation (base + distance)
+    const base = 7;
+    expect(MinesweeperConfig.calculateMinesForDistance(0, baseMines: base), equals(7));
+    expect(MinesweeperConfig.calculateMinesForDistance(1, baseMines: base), equals(8));
+    expect(MinesweeperConfig.calculateMinesForDistance(2, baseMines: base), equals(9));
+    expect(MinesweeperConfig.calculateMinesForDistance(5, baseMines: base), equals(12));
+
+    // 4. minesForRegion helper
+    expect(
+      MinesweeperConfig.minesForRegion(2, 2, startR: 2, startC: 2, baseMines: base),
+      equals(7),
+    );
+    expect(
+      MinesweeperConfig.minesForRegion(3, 3, startR: 2, startC: 2, baseMines: base),
+      equals(8),
+    );
+    expect(
+      MinesweeperConfig.minesForRegion(4, 2, startR: 2, startC: 2, baseMines: base),
+      equals(9),
+    );
   });
 }
 

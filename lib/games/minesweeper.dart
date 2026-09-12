@@ -158,6 +158,7 @@ class RegionData {
   final int c;
   final int rows;
   final int cols;
+  final bool isStartingRegion;
   late final Uint8List mines; // 1 = mine, 0 = safe
   late final Uint8List cellStates; // CellState values
   late final Uint8List adjacent; // cached adjacent mine counts (255 = uncomputed)
@@ -173,6 +174,7 @@ class RegionData {
     required this.c,
     required this.rows,
     required this.cols,
+    this.isStartingRegion = false,
   }) {
     final size = rows * cols;
     mines = Uint8List(size);
@@ -386,7 +388,13 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   int get _currentRegionMineCount {
     final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
     if (!region.isGenerated) {
-      return widget.minesPerRegion;
+      return MinesweeperConfig.minesForRegion(
+        _currentRegionRow,
+        _currentRegionCol,
+        startR: widget.initialRegionY,
+        startC: widget.initialRegionX,
+        baseMines: widget.minesPerRegion,
+      );
     }
     return region.mineCount;
   }
@@ -554,6 +562,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         c: c,
         rows: widget.regionRows,
         cols: widget.regionCols,
+        isStartingRegion:
+            (r == widget.initialRegionY && c == widget.initialRegionX),
       ),
     );
   }
@@ -607,8 +617,16 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
     }
 
+    final regionMines = MinesweeperConfig.minesForRegion(
+      region.r,
+      region.c,
+      startR: widget.initialRegionY,
+      startC: widget.initialRegionX,
+      baseMines: widget.minesPerRegion,
+    );
+
     final targetMines = min(
-      widget.minesPerRegion,
+      regionMines,
       availableIndices.length,
     );
 
@@ -1828,6 +1846,34 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                   ),
                 ),
 
+                // Starting region marker
+                if (regionRow == widget.initialRegionY &&
+                    regionCol == widget.initialRegionX)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        key: const ValueKey('starting_region_marker'),
+                        decoration: BoxDecoration(
+                          borderRadius:
+                              BorderRadius.circular(widget.panelCornerRadius),
+                          border: Border.all(
+                            color:
+                                AppColors.primaryAccent.withValues(alpha: 0.7),
+                            width: 2.0,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                                  AppColors.primaryAccent.withValues(alpha: 0.2),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // 2. Cell Grid (Entire Region)
                 Positioned(
                   left: paddingAmount + borderWidth,
@@ -2101,6 +2147,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                       regionsY: widget.regionsY,
                       currentRegionRow: _currentRegionRow,
                       currentRegionCol: _currentRegionCol,
+                      initialRegionRow: widget.initialRegionY,
+                      initialRegionCol: widget.initialRegionX,
                       selectedRegionRow: (_isThresholdFlipped || _isTransitioning)
                           ? (_currentRegionRow + _swipeDRow)
                           : _currentRegionRow,
@@ -2370,6 +2418,8 @@ class RegionMiniMapSelector extends StatefulWidget {
   final int minimapRows;
   final int currentRegionRow;
   final int currentRegionCol;
+  final int? initialRegionRow;
+  final int? initialRegionCol;
   final int? selectedRegionRow;
   final int? selectedRegionCol;
   final int regionRows;
@@ -2395,6 +2445,8 @@ class RegionMiniMapSelector extends StatefulWidget {
     this.minimapRows = MinesweeperConfig.minimapRows,
     required this.currentRegionRow,
     required this.currentRegionCol,
+    this.initialRegionRow,
+    this.initialRegionCol,
     this.selectedRegionRow,
     this.selectedRegionCol,
     required this.regionRows,
@@ -2601,6 +2653,10 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
       cellBg = AppColors.panelHigh;
     }
 
+    final startR = widget.initialRegionRow ?? MinesweeperConfig.initialRegionY;
+    final startC = widget.initialRegionCol ?? MinesweeperConfig.initialRegionX;
+    final isStartingRegion = (r == startR && c == startC);
+
     return Container(
       key: ValueKey('minimap_sector_${c + 1}_${r + 1}'),
       margin: const EdgeInsets.all(1.0),
@@ -2612,7 +2668,28 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
         decoration: BoxDecoration(
           color: cellBg,
           borderRadius: BorderRadius.circular(1.5),
+          border: isStartingRegion
+              ? Border.all(
+                  color: AppColors.primaryAccent.withValues(alpha: 0.8),
+                  width: 1.0,
+                )
+              : null,
         ),
+        child: isStartingRegion
+            ? const Center(
+                child: DecoratedBox(
+                  key: ValueKey('minimap_starting_region_marker'),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: SizedBox(
+                    width: 3.0,
+                    height: 3.0,
+                  ),
+                ),
+              )
+            : null,
       ),
     );
   }
