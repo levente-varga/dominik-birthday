@@ -1384,20 +1384,18 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _updateCandidateFade(activeDirection: (dRow, dCol));
       }
     } else {
-      if (distance < widget.swipeThreshold) {
-        if (_isThresholdFlipped) {
-          _isThresholdFlipped = false;
-          _centerDimController.reverse();
-          _updateCandidateFade(activeDirection: null);
-        }
-        if (canTransition) {
-          _swipeDRow = dRow;
-          _swipeDCol = dCol;
-        } else {
-          _swipeDRow = 0;
-          _swipeDCol = 0;
-        }
+      if (_isThresholdFlipped) {
+        _isThresholdFlipped = false;
+        _centerDimController.reverse();
+        _updateCandidateFade(activeDirection: null);
+      }
+      if (canTransition) {
+        _swipeDRow = dRow;
+        _swipeDCol = dCol;
       } else {
+        _swipeDRow = 0;
+        _swipeDCol = 0;
+        _centerDimController.reverse();
         _updateCandidateFade(activeDirection: null);
       }
     }

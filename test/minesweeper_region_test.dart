@@ -2782,6 +2782,98 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
   });
+
+  testWidgets('Switching drag from discovered region to non-discovered area resets traversal target and fades original region back in', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: true,
+      swipeThreshold: 64.0,
+      dragMinThreshold: 10.0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    // Explicitly unlock East region (2, 3) only (SE (3, 3) remains non-discovered)
+    state.unlockedRegions.add(const (2, 3));
+    (state as dynamic).setState(() {});
+    await tester.pumpAndSettle();
+
+    final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    final eastPanelFinder = find.byKey(const ValueKey('region_panel_0_1'));
+
+    double getOpacity(Finder f) => tester.widget<Opacity>(
+      find.descendant(of: f, matching: find.byType(Opacity)).first,
+    ).opacity;
+
+    // Initially at Sector [3, 3] with full opacity
+    expect(activeSector(3, 3), findsOneWidget);
+    expect(getOpacity(centerPanelFinder), equals(1.0));
+    expect(getOpacity(eastPanelFinder), equals(0.50));
+
+    // 1. Drag past swipeThreshold towards East (discovered region)
+    final gesture = await tester.startGesture(const Offset(250, 250));
+    await gesture.moveBy(const Offset(-70, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // Traversal target set to East: center dimmed to 0.50, East faded in to 1.0, minimap highlights Sector [4, 3]
+    expect(getOpacity(centerPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
+    expect(activeSector(4, 3), findsOneWidget);
+
+    // 2. Switch drag towards South-East (non-discovered area) while staying past swipeThreshold (dist ~70.7 > 64)
+    // Move from (-70, 0) to (-50, -50): moveBy(Offset(20, -50))
+    await gesture.moveBy(const Offset(20, -50));
+    await tester.pump();
+
+    // Traversal target must immediately reset to original region:
+    // Minimap selected sector resets to original Sector [3, 3]
+    expect(activeSector(3, 3), findsOneWidget);
+
+    // Mid-animation: center panel is fading back in (> 0.50), East panel is fading down (< 1.0)
+    await tester.pump(const Duration(milliseconds: 100));
+    final centerMidOpacity = getOpacity(centerPanelFinder);
+    final eastMidOpacity = getOpacity(eastPanelFinder);
+    expect(centerMidOpacity, greaterThan(0.50));
+    expect(centerMidOpacity, lessThan(1.0));
+    expect(eastMidOpacity, lessThan(1.0));
+    expect(eastMidOpacity, greaterThan(0.50));
+
+    // After animation completes (250ms)
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(getOpacity(centerPanelFinder), equals(1.0));
+    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(activeSector(3, 3), findsOneWidget);
+
+    // 3. Switch back to East (discovered region) while still dragging past threshold
+    // From (-50, -50) to (-70, 0): moveBy(Offset(-20, 50))
+    await gesture.moveBy(const Offset(-20, 50));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // Traversal target is restored to East: center dimmed to 0.50, East faded to 1.0, minimap at Sector [4, 3]
+    expect(getOpacity(centerPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
+    expect(activeSector(4, 3), findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
 }
 
 
