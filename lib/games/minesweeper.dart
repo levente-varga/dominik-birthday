@@ -1796,78 +1796,81 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       width: panelWidth,
       height: panelHeight,
       child: RepaintBoundary(
-        child: Opacity(
-          opacity: panelOpacity.clamp(0.0, 1.0),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              // 1. Panel Container Box (Card Fill + Shadow + Normal Border)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Container(
-                    key: const ValueKey('actual_panel_container'),
-                    decoration: BoxDecoration(
-                      color: AppColors.panelMedium,
-                      borderRadius:
-                          BorderRadius.circular(widget.panelCornerRadius),
-                      border: Border.all(
-                        color: AppColors.outlineDim,
-                        width: borderWidth,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 18,
-                          offset: const Offset(0, 5),
+        child: ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 0.001, sigmaY: 0.001),
+          child: Opacity(
+            opacity: panelOpacity.clamp(0.0, 1.0),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // 1. Panel Container Box (Card Fill + Shadow + Normal Border)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      key: const ValueKey('actual_panel_container'),
+                      decoration: BoxDecoration(
+                        color: AppColors.panelMedium,
+                        borderRadius:
+                            BorderRadius.circular(widget.panelCornerRadius),
+                        border: Border.all(
+                          color: AppColors.outlineDim,
+                          width: borderWidth,
                         ),
-                      ],
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            blurRadius: 18,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
 
-              // 2. Cell Grid (Entire Region)
-              Positioned(
-                left: paddingAmount + borderWidth,
-                top: paddingAmount + borderWidth,
-                width: activeGridWidth,
-                height: activeGridHeight,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (int r = 0; r < widget.regionRows; r++)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (int c = 0; c < widget.regionCols; c++)
-                            _buildCellForPanel(
-                              dr,
-                              dc,
-                              r,
-                              c,
-                              totalTileSize,
-                              cellGap,
-                            ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-
-              // 3. Shockwave Layer (Active Region Only)
-              if (dr == 0 && dc == 0)
+                // 2. Cell Grid (Entire Region)
                 Positioned(
                   left: paddingAmount + borderWidth,
                   top: paddingAmount + borderWidth,
                   width: activeGridWidth,
                   height: activeGridHeight,
-                  child: IgnorePointer(
-                    child: ShockwaveLayer(
-                      controller: _shockwaveLayerController,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (int r = 0; r < widget.regionRows; r++)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (int c = 0; c < widget.regionCols; c++)
+                              _buildCellForPanel(
+                                dr,
+                                dc,
+                                r,
+                                c,
+                                totalTileSize,
+                                cellGap,
+                              ),
+                          ],
+                        ),
+                    ],
                   ),
                 ),
-            ],
+
+                // 3. Shockwave Layer (Active Region Only)
+                if (dr == 0 && dc == 0)
+                  Positioned(
+                    left: paddingAmount + borderWidth,
+                    top: paddingAmount + borderWidth,
+                    width: activeGridWidth,
+                    height: activeGridHeight,
+                    child: IgnorePointer(
+                      child: ShockwaveLayer(
+                        controller: _shockwaveLayerController,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
