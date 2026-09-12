@@ -2355,6 +2355,124 @@ void main() {
     // SE diagonal minimap sector [4, 4] is now visible (not transparent)
     expect(sectorColor(4, 4), isNot(equals(Colors.transparent)));
   });
+
+  testWidgets(
+      'Diagonal swipe navigates into unlocked diagonal region',
+      (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: false,
+      swipeThreshold: 64.0,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Initial state: Sector [3, 3]
+    expect(activeSector(3, 3), findsOneWidget);
+
+    final centerCell = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    ).first;
+
+    // Diagonal drag up-left (dx = -80, dy = -80, distance ~113 > 64) -> pulls in South-East -> Sector [4, 4]
+    await tester.drag(centerCell, const Offset(-80, -80));
+    await tester.pumpAndSettle();
+    expect(activeSector(4, 4), findsOneWidget);
+
+    // Diagonal drag down-right (dx = 80, dy = 80) -> pulls in North-West -> back to Sector [3, 3]
+    await tester.drag(centerCell, const Offset(80, 80));
+    await tester.pumpAndSettle();
+    expect(activeSector(3, 3), findsOneWidget);
+  });
+
+  testWidgets(
+      'User can switch drag directions mid-drag and the active incoming region updates accordingly',
+      (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: false,
+      swipeThreshold: 50.0,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final centerCell = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    ).first;
+
+    // 1. Start gesture: drag left (East)
+    final gesture = await tester.startGesture(tester.getCenter(centerCell));
+    await gesture.moveBy(const Offset(-60, 0)); // East (dx = -60, dist = 60 > 50)
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300)); // fade in completed
+
+    // East neighbor panel (0, 1) should be at full opacity 1.0
+    final eastPanelOpacity = tester.widget<Opacity>(
+      find.descendant(
+        of: find.byKey(const ValueKey('region_panel_0_1')),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(eastPanelOpacity.opacity, equals(1.0));
+
+    // 2. Switch direction mid-drag without releasing: move to South-East (dx = -60, dy = -60)
+    await gesture.moveBy(const Offset(0, -60)); // total delta (-60, -60), South-East
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Now South-East panel (1, 1) should be at full opacity 1.0
+    final sePanelOpacity = tester.widget<Opacity>(
+      find.descendant(
+        of: find.byKey(const ValueKey('region_panel_1_1')),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(sePanelOpacity.opacity, equals(1.0));
+
+    // And East panel (0, 1) should have dropped back to neighbor base opacity (0.50)
+    final eastPanelAfterSwitch = tester.widget<Opacity>(
+      find.descendant(
+        of: find.byKey(const ValueKey('region_panel_0_1')),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(eastPanelAfterSwitch.opacity, equals(0.50));
+
+    // 3. Release: should navigate into South-East (Sector [4, 4])
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(activeSector(4, 4), findsOneWidget);
+  });
 }
 
 

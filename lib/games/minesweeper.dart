@@ -304,7 +304,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   Offset? _dragStartPos;
   Offset _rawDragDelta = Offset.zero;
-  Axis? _lockedAxis;
   bool _dragExceededTapSlop = false;
   bool _isTransitioning = false;
   int? _targetTransitionRow;
@@ -1154,11 +1153,36 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   // ── Swipe Gestures & Region Navigation ────────────────────────────────────
 
-  double _applyEaseOut(double delta, bool canMove) {
+  Offset _applyEaseOutOffset(Offset delta, bool canMove) {
+    final distance = delta.distance;
+    if (distance <= 0.0) return Offset.zero;
     final maxVisualDelta = canMove ? 100.0 : 35.0;
-    final sign = delta.sign;
-    final abs = delta.abs();
-    return sign * maxVisualDelta * (1.0 - exp(-abs / (maxVisualDelta * 1.5)));
+    final visualDistance =
+        maxVisualDelta * (1.0 - exp(-distance / (maxVisualDelta * 1.5)));
+    return (delta / distance) * visualDistance;
+  }
+
+  /// Determines the (dRow, dCol) transition direction by dividing the 2D plane
+  /// into 8 equal spherical (angular) slices of 45 degrees each.
+  /// The direction indicates which neighbor region is pulled into center view.
+  (int, int) _get8SliceDirection(Offset delta) {
+    if (delta.distance < 4.0) return (0, 0);
+    // Incoming region is in the opposite direction of the finger pull (-dx, -dy)
+    final angle = atan2(-delta.dy, -delta.dx);
+    var deg = angle * 180.0 / pi;
+    if (deg < 0) deg += 360.0;
+    final slice = ((deg + 22.5) ~/ 45) % 8;
+    return switch (slice) {
+      0 => (0, 1), // East (pulled left)
+      1 => (1, 1), // South-East (pulled up-left)
+      2 => (1, 0), // South (pulled up)
+      3 => (1, -1), // South-West (pulled up-right)
+      4 => (0, -1), // West (pulled right)
+      5 => (-1, -1), // North-West (pulled down-right)
+      6 => (-1, 0), // North (pulled down)
+      7 => (-1, 1), // North-East (pulled down-left)
+      _ => (0, 0),
+    };
   }
 
   void _finishTransitionImmediately() {
@@ -1207,7 +1231,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
     _dragStartPos = event.position;
     _rawDragDelta = Offset.zero;
-    _lockedAxis = null;
     _dragExceededTapSlop = false;
     _isThresholdFlipped = false;
     _slideController.stop();
@@ -1224,52 +1247,20 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       _dragExceededTapSlop = true;
     }
 
-    if (delta.distance > 4.0) {
-      _lockedAxis ??= (delta.dx.abs() >= delta.dy.abs())
-          ? Axis.horizontal
-          : Axis.vertical;
+    final distance = delta.distance;
 
-      int dRow = 0;
-      int dCol = 0;
-      double rawComponent = 0.0;
-
-      if (_lockedAxis == Axis.horizontal) {
-        rawComponent = delta.dx;
-        if (rawComponent < -1.0) {
-          dCol = 1;
-        } else if (rawComponent > 1.0) {
-          dCol = -1;
-        } else {
-          dCol = 0;
-        }
-      } else {
-        rawComponent = delta.dy;
-        if (rawComponent < -1.0) {
-          dRow = 1;
-        } else if (rawComponent > 1.0) {
-          dRow = -1;
-        } else {
-          dRow = 0;
-        }
-      }
+    if (distance > 4.0) {
+      final (dRow, dCol) = _get8SliceDirection(delta);
 
       final targetRow = _currentRegionRow + dRow;
       final targetCol = _currentRegionCol + dCol;
       final canTransition = (dRow != 0 || dCol != 0) &&
           _isRegionAccessible(targetRow, targetCol);
 
-      final visualDelta = _applyEaseOut(rawComponent, canTransition);
-
-      double visualDx = 0.0;
-      double visualDy = 0.0;
-      if (_lockedAxis == Axis.horizontal) {
-        visualDx = visualDelta;
-      } else {
-        visualDy = visualDelta;
-      }
+      final visualOffset = _applyEaseOutOffset(delta, canTransition);
 
       final isOverThreshold =
-          canTransition && rawComponent.abs() >= widget.swipeThreshold;
+          canTransition && distance >= widget.swipeThreshold;
 
       if (isOverThreshold) {
         if (!_isThresholdFlipped || _swipeDRow != dRow || _swipeDCol != dCol) {
@@ -1293,9 +1284,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
 
       setState(() {
-        _planeOffset = Offset(visualDx, visualDy);
+        _planeOffset = visualOffset;
       });
-    } else if (_lockedAxis != null) {
+    } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
         _fadeController.reverse();
@@ -1312,30 +1303,20 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _touchStartedWhileAnimating = false;
     if (_dragStartPos == null) return;
     final totalDelta = _rawDragDelta;
-    final lockedAxis = _lockedAxis;
     _dragStartPos = null;
-    _lockedAxis = null;
 
     final double threshold = widget.swipeThreshold;
-    int dRow = 0;
-    int dCol = 0;
-
-    if (lockedAxis == Axis.horizontal && totalDelta.dx.abs() >= threshold) {
-      // Swipe Left (dx <= -threshold) -> transition East (dCol = +1)
-      // Swipe Right (dx >= threshold) -> transition West (dCol = -1)
-      dCol = totalDelta.dx < 0 ? 1 : -1;
-    } else if (lockedAxis == Axis.vertical && totalDelta.dy.abs() >= threshold) {
-      // Swipe Up (dy <= -threshold) -> transition South (dRow = +1)
-      // Swipe Down (dy >= threshold) -> transition North (dRow = -1)
-      dRow = totalDelta.dy < 0 ? 1 : -1;
-    }
+    final distance = totalDelta.distance;
+    final (dRow, dCol) = _get8SliceDirection(totalDelta);
 
     final targetRow = _currentRegionRow + dRow;
     final targetCol = _currentRegionCol + dCol;
     final canTransition = (dRow != 0 || dCol != 0) &&
         _isRegionAccessible(targetRow, targetCol);
 
-    if (canTransition) {
+    final isOverThreshold = canTransition && distance >= threshold;
+
+    if (isOverThreshold) {
       _animateTransition(dRow, dCol, targetRow, targetCol);
     } else {
       if (_isThresholdFlipped) {
@@ -1349,7 +1330,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void _onPointerCancel(PointerCancelEvent event) {
     _touchStartedWhileAnimating = false;
     _dragStartPos = null;
-    _lockedAxis = null;
     if (_isThresholdFlipped) {
       _isThresholdFlipped = false;
       _fadeController.reverse();
