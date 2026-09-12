@@ -250,6 +250,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   final Map<(int, int), RegionData> _regions = {};
   final Map<(int, int), Set<int>> _forbiddenMineIndices = {};
 
+  @visibleForTesting
+  Map<(int, int), RegionData> get regions => _regions;
+
   // Active region coordinates (can be any integer coordinate)
   late int _currentRegionRow;
   late int _currentRegionCol;
@@ -354,6 +357,31 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
           _isRegionAccessible(coord.$1, coord.$2)) {
         _unlockedRegions.add(coord);
         _startUnlockFadeAnimation(coord);
+        _onRegionUnlocked(coord.$1, coord.$2);
+      }
+    }
+  }
+
+  void _onRegionUnlocked(int r, int c) {
+    if (!_minesPlaced) return;
+
+    _ensureRegionGenerated(r, c);
+
+    // 1. Generate all 8 surrounding neighbor regions immediately
+    for (int dr = -1; dr <= 1; dr++) {
+      for (int dc = -1; dc <= 1; dc++) {
+        if (dr == 0 && dc == 0) continue;
+        _ensureRegionGenerated(r + dr, c + dc);
+      }
+    }
+
+    // 2. Precalculate all adjacent numbers for the unlocked region
+    // so when the player starts exploring that region on the edges,
+    // we already have the numbers calculated.
+    final region = _getOrInitRegion(r, c);
+    for (int lr = 0; lr < region.rows; lr++) {
+      for (int lc = 0; lc < region.cols; lc++) {
+        _getAdjacentMines(r, c, lr, lc);
       }
     }
   }
@@ -647,6 +675,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _generateRegionMines(currentRegion);
     _actualMineCount = currentRegion.mineCount;
     _minesPlaced = true;
+    _onRegionUnlocked(_currentRegionRow, _currentRegionCol);
   }
 
   // ── Game actions ───────────────────────────────────────────────────────────
@@ -1071,6 +1100,12 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _targetTransitionCol != null) {
       _currentRegionRow = _targetTransitionRow!;
       _currentRegionCol = _targetTransitionCol!;
+      if (!_unlockedRegions.contains((_currentRegionRow, _currentRegionCol))) {
+        _unlockedRegions.add((_currentRegionRow, _currentRegionCol));
+      }
+      if (_minesPlaced) {
+        _onRegionUnlocked(_currentRegionRow, _currentRegionCol);
+      }
     }
     _targetTransitionRow = null;
     _targetTransitionCol = null;
@@ -1378,6 +1413,12 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       setState(() {
         _currentRegionRow = targetRow;
         _currentRegionCol = targetCol;
+        if (!_unlockedRegions.contains((targetRow, targetCol))) {
+          _unlockedRegions.add((targetRow, targetCol));
+        }
+        if (_minesPlaced) {
+          _onRegionUnlocked(targetRow, targetCol);
+        }
         _targetTransitionRow = null;
         _targetTransitionCol = null;
         _planeOffset = Offset.zero;

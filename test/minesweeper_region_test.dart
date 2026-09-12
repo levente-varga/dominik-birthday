@@ -2099,6 +2099,72 @@ void main() {
     // With all safe cells revealed and 0 mines to flag, region is cleared and onComplete triggers
     expect(stageCompleted, isTrue);
   });
+
+  testWidgets(
+      'When a region is unlocked, its 8 neighbors are generated immediately and all its edge numbers are precalculated',
+      (tester) async {
+    final game = MinesweeperGame(); // lockInaccessibleRegions: true by default
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    final Map<(int, int), dynamic> regions = state.regions;
+
+    // Initially, starting region is (2, 2)
+    // Find active cells:
+    final mainCells = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    );
+
+    // Cell at index 27 (row 3, col 6 in a 7-column region) is on East border
+    final eastBorderCell = mainCells.at(27);
+    await tester.tap(eastBorderCell);
+    await tester.pumpAndSettle();
+
+    // Tapping eastBorderCell unlocked East region (2, 3)
+    final eastRegion = regions[(2, 3)];
+    expect(eastRegion, isNotNull);
+    expect(eastRegion!.isGenerated, isTrue);
+
+    // All 8 neighbors of East region (2, 3) must be generated immediately
+    for (int dr = -1; dr <= 1; dr++) {
+      for (int dc = -1; dc <= 1; dc++) {
+        if (dr == 0 && dc == 0) continue;
+        final neighbor = regions[(2 + dr, 3 + dc)];
+        expect(neighbor, isNotNull, reason: 'Neighbor at (${2 + dr}, ${3 + dc}) should exist');
+        expect(neighbor!.isGenerated, isTrue, reason: 'Neighbor at (${2 + dr}, ${3 + dc}) should be generated');
+      }
+    }
+
+    // All cells (especially edges) of East region (2, 3) must have their numbers precalculated (!= 255)
+    final adjacentList = eastRegion.adjacent as List<int>;
+    for (int i = 0; i < adjacentList.length; i++) {
+      expect(
+        adjacentList[i],
+        isNot(equals(255)),
+        reason: 'Cell $i in unlocked region should have precalculated adjacent count',
+      );
+      expect(adjacentList[i], inInclusiveRange(0, 8));
+    }
+  });
 }
 
 
