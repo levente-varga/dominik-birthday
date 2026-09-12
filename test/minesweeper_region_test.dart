@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2706,6 +2707,77 @@ void main() {
     // Complete return to center
     await tester.pump(const Duration(milliseconds: 150));
     expect(getOpacity(centerPanelFinder), equals(1.0));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('Drag extension limit smoothly interpolates between discovered and undiscovered directions without jumping', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: true,
+      swipeThreshold: 64.0,
+      dragMinThreshold: 10.0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    // Explicitly unlock East region (2, 3) only (SE remains locked)
+    state.unlockedRegions.add(const (2, 3));
+    await tester.pumpAndSettle();
+
+    final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    final initialPos = tester.getTopLeft(centerPanelFinder);
+
+    const startPoint = Offset(300, 300);
+    final gesture = await tester.startGesture(startPoint);
+
+    // Sample visual displacements as angle rotates from 0 deg (East, unlocked)
+    // to 45 deg (SE, locked) at constant radius R = 100
+    const double radius = 100.0;
+    final displacements = <double>[];
+
+    for (double deg = 0; deg <= 45; deg += 5) {
+      final rad = deg * math.pi / 180.0;
+      final dx = -radius * math.cos(rad);
+      final dy = -radius * math.sin(rad);
+      await gesture.moveTo(startPoint + Offset(dx, dy));
+      await tester.pump();
+
+      final currentPos = tester.getTopLeft(centerPanelFinder);
+      final offset = currentPos - initialPos;
+      displacements.add(offset.distance);
+    }
+
+    // Unlocked displacement (deg = 0) is ~45px, locked displacement (deg = 45) is ~28.7px
+    expect(displacements.first, greaterThan(40.0));
+    expect(displacements.last, lessThan(32.0));
+
+    // Every step must decrease smoothly and monotonically without any jump > 4.0px
+    for (int i = 1; i < displacements.length; i++) {
+      final prev = displacements[i - 1];
+      final curr = displacements[i];
+      expect(curr, lessThanOrEqualTo(prev + 0.001),
+          reason: 'Displacement must decrease monotonically towards locked direction');
+      final stepChange = (prev - curr).abs();
+      expect(stepChange, lessThan(4.0),
+          reason: 'Displacement jumped abruptly ($stepChange px) at step $i');
+    }
 
     await gesture.up();
     await tester.pumpAndSettle();

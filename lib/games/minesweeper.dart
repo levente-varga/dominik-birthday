@@ -271,6 +271,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   @visibleForTesting
   Map<(int, int), RegionData> get regions => _regions;
 
+  @visibleForTesting
+  Set<(int, int)> get unlockedRegions => _unlockedRegions;
+
   // Active region coordinates (can be any integer coordinate)
   late int _currentRegionRow;
   late int _currentRegionCol;
@@ -1207,15 +1210,56 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
   }
 
-  // ── Swipe Gestures & Region Navigation ────────────────────────────────────
+  static const List<(int, int)> _canonicalDirections = [
+    (0, 1), // 0: East (0 deg)
+    (1, 1), // 1: South-East (45 deg)
+    (1, 0), // 2: South (90 deg)
+    (1, -1), // 3: South-West (135 deg)
+    (0, -1), // 4: West (180 deg)
+    (-1, -1), // 5: North-West (225 deg)
+    (-1, 0), // 6: North (270 deg)
+    (-1, 1), // 7: North-East (315 deg)
+  ];
+
+  /// Interpolates the drag extension limit (maxVisualDelta) smoothly between
+  /// discovered regions (100.0) and undiscovered/locked regions (35.0) as the
+  /// user's drag angle continuously swivels across direction sectors.
+  double _getContinuousMaxVisualDelta(Offset delta) {
+    if (delta.distance < 0.001) return 35.0;
+
+    final angle = atan2(-delta.dy, -delta.dx);
+    var deg = angle * 180.0 / pi;
+    if (deg < 0) deg += 360.0;
+    if (deg >= 360.0) deg -= 360.0;
+
+    final sector = deg / 45.0;
+    final k = sector.floor() % 8;
+    final nextK = (k + 1) % 8;
+    final t = sector - sector.floor();
+
+    final (drK, dcK) = _canonicalDirections[k];
+    final (drNext, dcNext) = _canonicalDirections[nextK];
+
+    final isKAccessible =
+        _isRegionAccessible(_currentRegionRow + drK, _currentRegionCol + dcK);
+    final isNextAccessible = _isRegionAccessible(
+        _currentRegionRow + drNext, _currentRegionCol + dcNext);
+
+    final limitK = isKAccessible ? 100.0 : 35.0;
+    final limitNext = isNextAccessible ? 100.0 : 35.0;
+
+    if (limitK == limitNext) return limitK;
+
+    final smoothT = t * t * (3.0 - 2.0 * t);
+    return limitK + (limitNext - limitK) * smoothT;
+  }
 
   Offset _applyEaseOutOffset(
     Offset delta,
     double effectiveDistance,
-    bool canMove,
+    double maxVisualDelta,
   ) {
     if (effectiveDistance <= 0.0 || delta.distance <= 0.0) return Offset.zero;
-    final maxVisualDelta = canMove ? 100.0 : 35.0;
     final visualDistance =
         maxVisualDelta * (1.0 - exp(-effectiveDistance / (maxVisualDelta * 1.5)));
     return (delta / delta.distance) * visualDistance;
@@ -1231,17 +1275,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     var deg = angle * 180.0 / pi;
     if (deg < 0) deg += 360.0;
     final slice = ((deg + 22.5) ~/ 45) % 8;
-    return switch (slice) {
-      0 => (0, 1), // East (pulled left)
-      1 => (1, 1), // South-East (pulled up-left)
-      2 => (1, 0), // South (pulled up)
-      3 => (1, -1), // South-West (pulled up-right)
-      4 => (0, -1), // West (pulled right)
-      5 => (-1, -1), // North-West (pulled down-right)
-      6 => (-1, 0), // North (pulled down)
-      7 => (-1, 1), // North-East (pulled down-left)
-      _ => (0, 0),
-    };
+    return _canonicalDirections[slice];
   }
 
   void _finishTransitionImmediately() {
@@ -1334,8 +1368,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     final canTransition = (dRow != 0 || dCol != 0) &&
         _isRegionAccessible(targetRow, targetCol);
 
+    final maxVisualDelta = _getContinuousMaxVisualDelta(delta);
     final visualOffset =
-        _applyEaseOutOffset(delta, effectiveDistance, canTransition);
+        _applyEaseOutOffset(delta, effectiveDistance, maxVisualDelta);
 
     final isOverThreshold =
         canTransition && distance >= widget.swipeThreshold;
