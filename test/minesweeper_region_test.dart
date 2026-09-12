@@ -2874,6 +2874,53 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+      'Region panels are wrapped in RepaintBoundary for smooth subpixel movement',
+      (tester) async {
+    final game = MinesweeperGame();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    expect(centerPanelFinder, findsOneWidget);
+
+    // Verify RepaintBoundary is present on region panel
+    final repaintBoundaryFinder = find.descendant(
+      of: centerPanelFinder,
+      matching: find.byType(RepaintBoundary),
+    );
+    expect(repaintBoundaryFinder, findsOneWidget);
+
+    final renderObj = tester.renderObject(repaintBoundaryFinder);
+    expect(renderObj.isRepaintBoundary, isTrue);
+
+    // Verify subpixel movement during drag
+    final gesture = await tester.startGesture(tester.getCenter(centerPanelFinder));
+    await gesture.moveBy(const Offset(-15.4, -8.7));
+    await tester.pump();
+
+    final panelPos = tester.getTopLeft(centerPanelFinder);
+    expect(panelPos.dx % 1.0, isNot(equals(0.0))); // Has fractional subpixel component
+    expect(renderObj.isRepaintBoundary, isTrue);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
 }
 
 
