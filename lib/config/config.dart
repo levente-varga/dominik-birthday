@@ -66,11 +66,17 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Mine density (fraction of total world cells that are mines, e.g. 0.15 = 15%)
   static const double mineDensity = 0.15;
 
+  /// Number of cells in a single region
+  static int get cellsPerRegion => regionRows * regionCols;
+
+  /// Exact number of mines in each region (uniform across all regions)
+  static int get minesPerRegion => (cellsPerRegion * mineDensity).round();
+
   /// Total world map dimensions
   static int get worldRows => regionsY * regionRows;
   static int get worldCols => regionsX * regionCols;
   static int get totalCells => worldRows * worldCols;
-  static int get totalMines => (totalCells * mineDensity).round();
+  static int get totalMines => regionsX * regionsY * minesPerRegion;
 
   /// Legacy properties for backwards compatibility
   static int get baseRows => worldRows;

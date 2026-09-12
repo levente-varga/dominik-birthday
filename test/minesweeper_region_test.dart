@@ -2165,6 +2165,55 @@ void main() {
       expect(adjacentList[i], inInclusiveRange(0, 8));
     }
   });
+
+  testWidgets('All regions have the exact same amount of mines', (tester) async {
+    const targetMines = 8;
+    final game = MinesweeperGame(
+      minesPerRegion: targetMines,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    final Map<(int, int), dynamic> regions = state.regions;
+
+    // Trigger initial click to generate starting region and its 8 neighbors
+    final mainCells = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    );
+    await tester.tap(mainCells.at(24));
+    await tester.pumpAndSettle();
+
+    // Verify all generated regions have exactly targetMines
+    expect(regions.length, greaterThanOrEqualTo(9));
+    for (final entry in regions.entries) {
+      if (entry.value.isGenerated as bool) {
+        final mineList = entry.value.mines as List<int>;
+        final count = mineList.where((m) => m == 1).length;
+        expect(count, equals(targetMines),
+            reason: 'Region at ${entry.key} should have exactly $targetMines mines');
+        expect(entry.value.mineCount, equals(targetMines));
+      }
+    }
+  });
 }
 
 

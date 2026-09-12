@@ -55,6 +55,7 @@ class MinesweeperGame extends Game {
   final bool? isInfiniteWorld;
   final int? initialRegionX;
   final int? initialRegionY;
+  final int? minesPerRegion;
   final double? mineDensity;
   final VoidCallback? onPause;
 
@@ -80,6 +81,7 @@ class MinesweeperGame extends Game {
     this.isInfiniteWorld,
     this.initialRegionX,
     this.initialRegionY,
+    this.minesPerRegion,
     this.mineDensity,
     this.onPause,
   });
@@ -91,12 +93,21 @@ class MinesweeperGame extends Game {
     required VoidCallback onFail,
     required GameStateManager gameState,
   }) {
+    final resolvedMinesPerRegion = minesPerRegion ??
+        (mineDensity != null
+            ? (MinesweeperConfig.regionRows *
+                    MinesweeperConfig.regionCols *
+                    mineDensity!)
+                .round()
+            : MinesweeperConfig.minesPerRegion);
+
     return _MinesweeperGame(
       regionsX: MinesweeperConfig.regionsX,
       regionsY: MinesweeperConfig.regionsY,
       regionRows: MinesweeperConfig.regionRows,
       regionCols: MinesweeperConfig.regionCols,
       mineCount: MinesweeperConfig.totalMines,
+      minesPerRegion: resolvedMinesPerRegion,
       mineDensity: mineDensity ?? MinesweeperConfig.mineDensity,
       initialRegionX: initialRegionX ?? MinesweeperConfig.initialRegionX,
       initialRegionY: initialRegionY ?? MinesweeperConfig.initialRegionY,
@@ -179,6 +190,7 @@ class _MinesweeperGame extends StatefulWidget {
   final int regionRows;
   final int regionCols;
   final int mineCount;
+  final int minesPerRegion;
   final double mineDensity;
   final int initialRegionX;
   final int initialRegionY;
@@ -211,6 +223,7 @@ class _MinesweeperGame extends StatefulWidget {
     required this.regionRows,
     required this.regionCols,
     required this.mineCount,
+    required this.minesPerRegion,
     this.mineDensity = MinesweeperConfig.mineDensity,
     required this.initialRegionX,
     required this.initialRegionY,
@@ -317,7 +330,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   int get _currentRegionMineCount {
     final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
     if (!region.isGenerated) {
-      return (widget.regionRows * widget.regionCols * widget.mineDensity).round();
+      return widget.minesPerRegion;
     }
     return region.mineCount;
   }
@@ -416,7 +429,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     super.initState();
     _currentRegionRow = widget.initialRegionY;
     _currentRegionCol = widget.initialRegionX;
-    _actualMineCount = widget.mineCount;
+    _actualMineCount = widget.isInfiniteWorld
+        ? widget.minesPerRegion
+        : (widget.regionsX * widget.regionsY * widget.minesPerRegion);
     _initUnlockedRegions();
 
     _slideController = AnimationController(
@@ -531,7 +546,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
 
     final targetMines = min(
-      (totalCells * widget.mineDensity).round(),
+      widget.minesPerRegion,
       availableIndices.length,
     );
 
@@ -673,7 +688,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final currentRegion = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
     _generateRegionMines(currentRegion);
-    _actualMineCount = currentRegion.mineCount;
+    _actualMineCount = widget.isInfiniteWorld
+        ? currentRegion.mineCount
+        : (widget.regionsX * widget.regionsY * widget.minesPerRegion);
     _minesPlaced = true;
     _onRegionUnlocked(_currentRegionRow, _currentRegionCol);
   }
