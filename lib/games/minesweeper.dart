@@ -1827,11 +1827,17 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     child: Container(
                       key: const ValueKey('actual_panel_container'),
                       decoration: BoxDecoration(
-                        color: AppColors.panelMedium,
+                        color: (regionRow == widget.initialRegionY &&
+                                regionCol == widget.initialRegionX)
+                            ? const Color(0xFF2B2930)
+                            : AppColors.panelMedium,
                         borderRadius:
                             BorderRadius.circular(widget.panelCornerRadius),
                         border: Border.all(
-                          color: AppColors.outlineDim,
+                          color: (regionRow == widget.initialRegionY &&
+                                  regionCol == widget.initialRegionX)
+                              ? const Color(0x4DFFFFFF)
+                              : AppColors.outlineDim,
                           width: borderWidth,
                         ),
                         boxShadow: [
@@ -1853,23 +1859,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     child: IgnorePointer(
                       child: Container(
                         key: const ValueKey('starting_region_marker'),
-                        decoration: BoxDecoration(
-                          borderRadius:
-                              BorderRadius.circular(widget.panelCornerRadius),
-                          border: Border.all(
-                            color:
-                                AppColors.primaryAccent.withValues(alpha: 0.7),
-                            width: 2.0,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                                  AppColors.primaryAccent.withValues(alpha: 0.2),
-                              blurRadius: 10,
-                              spreadRadius: 1,
-                            ),
-                          ],
-                        ),
                       ),
                     ),
                   ),
@@ -2670,7 +2659,7 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
           borderRadius: BorderRadius.circular(1.5),
           border: isStartingRegion
               ? Border.all(
-                  color: AppColors.primaryAccent.withValues(alpha: 0.8),
+                  color: const Color(0x66FFFFFF),
                   width: 1.0,
                 )
               : null,
