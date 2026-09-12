@@ -294,6 +294,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   // ── Swipe & Multi-Panel Transition State ─────────────────────────────────
   late final AnimationController _slideController;
+  late final AnimationController _centerDimController;
+  late final Animation<double> _centerDimAnimation;
   final Map<(int, int), AnimationController> _candidateFadeControllers = {};
   final Map<(int, int), Animation<double>> _candidateFadeAnimations = {};
   Animation<Offset>? _offsetAnimation;
@@ -367,6 +369,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       _slideController.isAnimating ||
       _planeOffset != Offset.zero ||
       _transitionProgress > 0.0 ||
+      _centerDimController.isAnimating ||
       _isCandidateFading ||
       _swipeDRow != 0 ||
       _swipeDCol != 0;
@@ -506,6 +509,19 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         }
       });
     });
+
+    _centerDimController = AnimationController(
+      vsync: this,
+      duration: MinesweeperConfig.candidateFadeDuration,
+    );
+    _centerDimAnimation = CurvedAnimation(
+      parent: _centerDimController,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeOut,
+    );
+    _centerDimController.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -517,6 +533,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _unlockAnimations.clear();
     _focusNode.dispose();
     _shockwaveLayerController.dispose();
+    _centerDimController.dispose();
     for (final controller in _candidateFadeControllers.values) {
       controller.dispose();
     }
@@ -1236,6 +1253,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
     _slideController.stop();
+    _centerDimController.stop();
+    _centerDimController.value = 0.0;
     _resetCandidateFade();
     if (_isTransitioning &&
         _targetTransitionRow != null &&
@@ -1275,6 +1294,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragExceededTapSlop = false;
     _isThresholdFlipped = false;
     _slideController.stop();
+    _centerDimController.stop();
+    _centerDimController.value = 0.0;
     _resetCandidateFade();
   }
 
@@ -1297,6 +1318,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
+        _centerDimController.reverse();
         _updateCandidateFade(activeDirection: null);
       }
       _swipeDRow = 0;
@@ -1319,6 +1341,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         canTransition && distance >= widget.swipeThreshold;
 
     if (isOverThreshold) {
+      _centerDimController.forward();
       if (!_isThresholdFlipped || _swipeDRow != dRow || _swipeDCol != dCol) {
         _isThresholdFlipped = true;
         _swipeDRow = dRow;
@@ -1326,16 +1349,21 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _updateCandidateFade(activeDirection: (dRow, dCol));
       }
     } else {
-      if (_isThresholdFlipped) {
-        _isThresholdFlipped = false;
-        _updateCandidateFade(activeDirection: null);
-      }
-      if (canTransition) {
-        _swipeDRow = dRow;
-        _swipeDCol = dCol;
+      if (distance < widget.swipeThreshold) {
+        if (_isThresholdFlipped) {
+          _isThresholdFlipped = false;
+          _centerDimController.reverse();
+          _updateCandidateFade(activeDirection: null);
+        }
+        if (canTransition) {
+          _swipeDRow = dRow;
+          _swipeDCol = dCol;
+        } else {
+          _swipeDRow = 0;
+          _swipeDCol = 0;
+        }
       } else {
-        _swipeDRow = 0;
-        _swipeDCol = 0;
+        _updateCandidateFade(activeDirection: null);
       }
     }
 
@@ -1366,6 +1394,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
+        _centerDimController.reverse();
         _updateCandidateFade(activeDirection: null);
       }
       _animateSnapBack();
@@ -1377,6 +1406,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragStartPos = null;
     if (_isThresholdFlipped) {
       _isThresholdFlipped = false;
+      _centerDimController.reverse();
       _updateCandidateFade(activeDirection: null);
     }
     _animateSnapBack();
@@ -1385,6 +1415,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void _animateSnapBack() {
     _slideController.stop();
     _isThresholdFlipped = false;
+    _centerDimController.reverse();
     _updateCandidateFade(activeDirection: null);
     setState(() {
       _targetTransitionRow = null;
@@ -1401,6 +1432,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _swipeDCol = 0;
         _transitionProgress = 0.0;
         _gradientProgress = 0.0;
+        _centerDimController.stop();
+        _centerDimController.value = 0.0;
         _resetCandidateFade();
       });
       return;
@@ -1446,6 +1479,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _isThresholdFlipped = false;
         _swipeDRow = 0;
         _swipeDCol = 0;
+        _centerDimController.stop();
+        _centerDimController.value = 0.0;
         _resetCandidateFade();
       });
     }).catchError((_) {});
@@ -1464,6 +1499,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _targetTransitionRow = targetRow;
     _targetTransitionCol = targetCol;
     _slideController.stop();
+    _centerDimController.stop();
+    _centerDimController.value = 1.0;
 
     final targetCtrl = _getCandidateFadeController((dRow, dCol));
     targetCtrl.stop();
@@ -1543,6 +1580,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _swipeDRow = 0;
         _swipeDCol = 0;
         _isTransitioning = false;
+        _centerDimController.stop();
+        _centerDimController.value = 0.0;
         _resetCandidateFade();
       });
     }).catchError((_) {});
@@ -1705,13 +1744,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         panelOpacity = neighborBaseOpacity;
       }
     } else if (dr == 0 && dc == 0) {
-      double maxCandidate = 0.0;
-      for (final anim in _candidateFadeAnimations.values) {
-        if (anim.value > maxCandidate) {
-          maxCandidate = anim.value;
-        }
-      }
-      panelOpacity = 1.0 - (maxCandidate * (1.0 - neighborBaseOpacity));
+      final dimProgress = _centerDimAnimation.value.clamp(0.0, 1.0);
+      panelOpacity = 1.0 - (dimProgress * (1.0 - neighborBaseOpacity));
     } else {
       final candidateAnim = _candidateFadeAnimations[(dr, dc)];
       final candidateProgress = candidateAnim?.value ?? 0.0;

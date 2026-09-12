@@ -2630,6 +2630,86 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
   });
+
+  testWidgets('Mid-drag traversal target switching does not blink or flicker center region opacity', (tester) async {
+    final game = MinesweeperGame(
+      lockInaccessibleRegions: false,
+      swipeThreshold: 64.0,
+      dragMinThreshold: 10.0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    final eastPanelFinder = find.byKey(const ValueKey('region_panel_0_1'));
+    final sePanelFinder = find.byKey(const ValueKey('region_panel_1_1'));
+
+    double getOpacity(Finder f) => tester.widget<Opacity>(
+      find.descendant(of: f, matching: find.byType(Opacity)).first,
+    ).opacity;
+
+    expect(getOpacity(centerPanelFinder), equals(1.0));
+
+    // 1. Drag past swipeThreshold towards East (Offset(-70, 0))
+    final gesture = await tester.startGesture(const Offset(250, 250));
+    await gesture.moveBy(const Offset(-70, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(getOpacity(centerPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
+    expect(getOpacity(sePanelFinder), equals(0.50));
+
+    // 2. Switch mid-drag to South-East without lifting pointer (Offset(-50, -50))
+    await gesture.moveBy(const Offset(20, -50));
+    await tester.pump();
+
+    // At each frame during the 200ms cross-fade, center panel must remain steady at 0.50
+    for (int ms = 0; ms <= 200; ms += 25) {
+      await tester.pump(const Duration(milliseconds: 25));
+      expect(
+        getOpacity(centerPanelFinder),
+        equals(0.50),
+        reason: 'Center panel blinked or changed opacity at ms=$ms during candidate switch',
+      );
+    }
+
+    // Verify final states of candidate targets
+    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(getOpacity(sePanelFinder), equals(1.0));
+    expect(getOpacity(centerPanelFinder), equals(0.50));
+
+    // 3. Pull back towards center below swipeThreshold (distance ~28.3 < 64)
+    // From (-50, -50) move by (30, 30) -> new delta (-20, -20)
+    await gesture.moveBy(const Offset(30, 30));
+    await tester.pump();
+
+    // Center panel should now be fading back to 1.0
+    await tester.pump(const Duration(milliseconds: 100));
+    final midRestoreCenterOpacity = getOpacity(centerPanelFinder);
+    expect(midRestoreCenterOpacity, greaterThan(0.50));
+    expect(midRestoreCenterOpacity, lessThan(1.0));
+
+    // Complete return to center
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(getOpacity(centerPanelFinder), equals(1.0));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
 }
 
 
