@@ -357,19 +357,24 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void _checkNewlyUnlockedRegions() {
     if (!widget.lockInaccessibleRegions) return;
 
-    final candidates = [
-      (_currentRegionRow - 1, _currentRegionCol),
-      (_currentRegionRow + 1, _currentRegionCol),
-      (_currentRegionRow, _currentRegionCol - 1),
-      (_currentRegionRow, _currentRegionCol + 1),
-    ];
-
-    for (final coord in candidates) {
-      if (!_unlockedRegions.contains(coord) &&
-          _isRegionAccessible(coord.$1, coord.$2)) {
-        _unlockedRegions.add(coord);
-        _startUnlockFadeAnimation(coord);
-        _onRegionUnlocked(coord.$1, coord.$2);
+    bool foundNew = true;
+    while (foundNew) {
+      foundNew = false;
+      final currentUnlocked = List<(int, int)>.from(_unlockedRegions);
+      for (final (ur, uc) in currentUnlocked) {
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            if (dr == 0 && dc == 0) continue;
+            final coord = (ur + dr, uc + dc);
+            if (!_unlockedRegions.contains(coord) &&
+                _isRegionAccessible(coord.$1, coord.$2)) {
+              _unlockedRegions.add(coord);
+              _startUnlockFadeAnimation(coord);
+              _onRegionUnlocked(coord.$1, coord.$2);
+              foundNew = true;
+            }
+          }
+        }
       }
     }
   }
@@ -591,6 +596,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   /// 4. It has already been unlocked in _unlockedRegions.
   /// 5. Any cell inside the region is already revealed.
   /// 6. At least one cell directly adjacent (sharing an orthogonal edge) to it in the world is revealed.
+  /// 7. At least one diagonal neighbor has its touching corner tile revealed.
   bool _isRegionAccessible(int r, int c) {
     if (!widget.lockInaccessibleRegions) return true;
 
@@ -656,6 +662,46 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         if (state == CellState.revealed || state == CellState.hiddenNumber) {
           return true;
         }
+      }
+    }
+
+    // 5. North-West diagonal corner: bottom-right corner of region (r - 1, c - 1)
+    final nwRegion = _regions[(r - 1, c - 1)];
+    if (nwRegion != null) {
+      final lastRow = widget.regionRows - 1;
+      final lastCol = widget.regionCols - 1;
+      final state = nwRegion.cellStates[nwRegion.localIndex(lastRow, lastCol)];
+      if (state == CellState.revealed || state == CellState.hiddenNumber) {
+        return true;
+      }
+    }
+
+    // 6. North-East diagonal corner: bottom-left corner of region (r - 1, c + 1)
+    final neRegion = _regions[(r - 1, c + 1)];
+    if (neRegion != null) {
+      final lastRow = widget.regionRows - 1;
+      final state = neRegion.cellStates[neRegion.localIndex(lastRow, 0)];
+      if (state == CellState.revealed || state == CellState.hiddenNumber) {
+        return true;
+      }
+    }
+
+    // 7. South-West diagonal corner: top-right corner of region (r + 1, c - 1)
+    final swRegion = _regions[(r + 1, c - 1)];
+    if (swRegion != null) {
+      final lastCol = widget.regionCols - 1;
+      final state = swRegion.cellStates[swRegion.localIndex(0, lastCol)];
+      if (state == CellState.revealed || state == CellState.hiddenNumber) {
+        return true;
+      }
+    }
+
+    // 8. South-East diagonal corner: top-left corner of region (r + 1, c + 1)
+    final seRegion = _regions[(r + 1, c + 1)];
+    if (seRegion != null) {
+      final state = seRegion.cellStates[seRegion.localIndex(0, 0)];
+      if (state == CellState.revealed || state == CellState.hiddenNumber) {
+        return true;
       }
     }
 

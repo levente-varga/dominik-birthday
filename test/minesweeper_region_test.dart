@@ -2287,6 +2287,74 @@ void main() {
       reason: 'Cell (3, 0) in neighboring East region should be revealed by chording',
     );
   });
+
+  testWidgets(
+      'Revealing a corner tile unlocks the diagonal neighbor region and makes it visible and accessible',
+      (tester) async {
+    final game = MinesweeperGame(); // lockInaccessibleRegions: true by default
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Initially, diagonal panels are hidden
+    expect(find.byKey(const ValueKey('region_panel_-1_-1')), findsNothing);
+    expect(find.byKey(const ValueKey('region_panel_1_1')), findsNothing);
+
+    Color sectorColor(int x, int y) {
+      final sectorFinder = find.descendant(
+        of: find.byKey(ValueKey('minimap_sector_${x}_$y')),
+        matching: find.byType(Container),
+      ).last;
+      return (tester.widget<Container>(sectorFinder).decoration as BoxDecoration).color!;
+    }
+
+    // Diagonal sectors [2, 2] (NW) and [4, 4] (SE) are initially transparent
+    expect(sectorColor(2, 2), equals(Colors.transparent));
+    expect(sectorColor(4, 4), equals(Colors.transparent));
+
+    final mainCells = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    );
+
+    // 1. Reveal Top-Left corner tile (index 0, row 0, col 0)
+    final topLeftCell = mainCells.at(0);
+    await tester.tap(topLeftCell);
+    await tester.pumpAndSettle();
+
+    // North-West diagonal neighbor panel (-1, -1) is now rendered!
+    expect(find.byKey(const ValueKey('region_panel_-1_-1')), findsOneWidget);
+    // NW diagonal minimap sector [2, 2] is now visible (not transparent)
+    expect(sectorColor(2, 2), isNot(equals(Colors.transparent)));
+
+    // Opposite diagonal SE neighbor panel (1, 1) and sector [4, 4] remain locked
+    expect(find.byKey(const ValueKey('region_panel_1_1')), findsNothing);
+    expect(sectorColor(4, 4), equals(Colors.transparent));
+
+    // 2. Reveal Bottom-Right corner tile (index 48, row 6, col 6)
+    final bottomRightCell = mainCells.at(48);
+    await tester.tap(bottomRightCell);
+    await tester.pumpAndSettle();
+
+    // South-East diagonal neighbor panel (1, 1) is now unlocked and rendered!
+    expect(find.byKey(const ValueKey('region_panel_1_1')), findsOneWidget);
+    // SE diagonal minimap sector [4, 4] is now visible (not transparent)
+    expect(sectorColor(4, 4), isNot(equals(Colors.transparent)));
+  });
 }
 
 
