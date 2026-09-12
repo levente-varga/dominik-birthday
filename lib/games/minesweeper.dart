@@ -900,7 +900,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final adjCount = _getAdjacentMines(region.r, region.c, localRow, localCol);
     int flaggedCount = 0;
-    final unflaggedNeighbors = <Point<int>>[];
+    final unflaggedNeighbors = <(int, int, int, int)>[];
 
     for (int dr = -1; dr <= 1; dr++) {
       for (int dc = -1; dc <= 1; dc++) {
@@ -911,18 +911,14 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
           localRow + dr,
           localCol + dc,
         );
-        final nRegion = _regions[(nrR, nrC)];
-        final nState = nRegion != null
-            ? nRegion.cellStates[nRegion.localIndex(nlR, nlC)]
-            : CellState.unrevealed;
+        _ensureRegionGenerated(nrR, nrC);
+        final nRegion = _getOrInitRegion(nrR, nrC);
+        final nState = nRegion.cellStates[nRegion.localIndex(nlR, nlC)];
 
         if (nState == CellState.flagged) {
           flaggedCount++;
         } else if (nState == CellState.unrevealed) {
-          // Middle click chording MUST NOT interact with or reveal cells in other regions
-          if (nrR == _currentRegionRow && nrC == _currentRegionCol) {
-            unflaggedNeighbors.add(Point(nlR, nlC));
-          }
+          unflaggedNeighbors.add((nrR, nrC, nlR, nlC));
         }
       }
     }
@@ -936,15 +932,39 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     setState(() {
       final newlyRevealed = <int>[];
-      for (final pt in unflaggedNeighbors) {
-        final nIdx = region.localIndex(pt.x, pt.y);
-        if (region.mines[nIdx] == 1) {
+      final newlyUnlockedCoords = <(int, int)>{};
+
+      for (final (nrR, nrC, nlR, nlC) in unflaggedNeighbors) {
+        final targetRegion = _getOrInitRegion(nrR, nrC);
+        final nIdx = targetRegion.localIndex(nlR, nlC);
+        if (targetRegion.cellStates[nIdx] != CellState.unrevealed) {
+          continue;
+        }
+
+        if (targetRegion.mines[nIdx] == 1) {
           hitMine = true;
           minesRevealedByChord++;
-          region.cellStates[nIdx] = CellState.activatedMine;
-          _addShockwave(pt.x, pt.y);
+          targetRegion.cellStates[nIdx] = CellState.activatedMine;
+          if (nrR == _currentRegionRow && nrC == _currentRegionCol) {
+            _addShockwave(nlR, nlC);
+          }
         } else {
-          _floodReveal(region, pt.x, pt.y, newlyRevealed);
+          final targetNewlyRevealed = <int>[];
+          _floodReveal(targetRegion, nlR, nlC, targetNewlyRevealed);
+          if (nrR == _currentRegionRow && nrC == _currentRegionCol) {
+            newlyRevealed.addAll(targetNewlyRevealed);
+          }
+          if (nrR != _currentRegionRow || nrC != _currentRegionCol) {
+            newlyUnlockedCoords.add((nrR, nrC));
+          }
+        }
+      }
+
+      for (final coord in newlyUnlockedCoords) {
+        if (!_unlockedRegions.contains(coord)) {
+          _unlockedRegions.add(coord);
+          _startUnlockFadeAnimation(coord);
+          _onRegionUnlocked(coord.$1, coord.$2);
         }
       }
 
@@ -1002,10 +1022,12 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   }
 
   void _revealAllMines() {
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
-    for (int i = 0; i < region.rows * region.cols; i++) {
-      if (region.mines[i] == 1 && region.cellStates[i] != CellState.activatedMine) {
-        region.cellStates[i] = CellState.revealedMine;
+    for (final region in _regions.values) {
+      if (!region.isGenerated) continue;
+      for (int i = 0; i < region.rows * region.cols; i++) {
+        if (region.mines[i] == 1 && region.cellStates[i] != CellState.activatedMine) {
+          region.cellStates[i] = CellState.revealedMine;
+        }
       }
     }
   }

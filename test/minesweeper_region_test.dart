@@ -416,7 +416,7 @@ void main() {
     }
   });
 
-  testWidgets('Chording does not reveal or affect cells in other regions', (tester) async {
+  testWidgets('Normal reveals and auto exploration do not reveal or affect cells in other regions', (tester) async {
     final game = MinesweeperGame();
 
     await tester.pumpWidget(
@@ -2214,7 +2214,82 @@ void main() {
       }
     }
   });
+
+  testWidgets('Chording affects and reveals cells in neighboring regions', (tester) async {
+    final game = MinesweeperGame();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    final Map<(int, int), dynamic> regions = state.regions;
+
+    // 1. Initial click at center of starting region (2, 2)
+    final mainCells = find.byWidgetPredicate(
+      (widget) =>
+          widget.runtimeType.toString() == '_RegionCellWidget' &&
+          (widget as dynamic).isNeighbor == false,
+    );
+    await tester.tap(mainCells.at(24));
+    await tester.pumpAndSettle();
+
+    // 2. Set up deterministic board configuration around East border cell (3, 6) in region (2, 2):
+    final currentRegion = regions[(2, 2)];
+    final eastRegion = regions[(2, 3)];
+
+    // Clear mines in surrounding cells of (3, 6) in (2, 2) and (2, 3)
+    for (int r = 0; r < 7; r++) {
+      for (int c = 0; c < 7; c++) {
+        currentRegion.mines[currentRegion.localIndex(r, c)] = 0;
+        eastRegion.mines[eastRegion.localIndex(r, c)] = 0;
+      }
+    }
+    // Place 1 mine at (3, 5) in (2, 2)
+    currentRegion.mines[currentRegion.localIndex(3, 5)] = 1;
+    // Invalidate cached adjacent numbers
+    (currentRegion.adjacent as List<int>).fillRange(0, 49, 255);
+    (eastRegion.adjacent as List<int>).fillRange(0, 49, 255);
+
+    // Flag the mine at (3, 5) and reveal cell (3, 6)
+    currentRegion.cellStates[currentRegion.localIndex(3, 5)] = CellState.flagged;
+    currentRegion.cellStates[currentRegion.localIndex(3, 6)] = CellState.revealed;
+    // Ensure east neighbor cell (3, 0) is unrevealed
+    eastRegion.cellStates[eastRegion.localIndex(3, 0)] = CellState.unrevealed;
+
+    await tester.pump();
+
+    // Verify cell (3, 0) in east neighbor region is currently unrevealed
+    expect(eastRegion.cellStates[eastRegion.localIndex(3, 0)], equals(CellState.unrevealed));
+
+    // 3. Tap on revealed cell (3, 6) in current region to trigger chord
+    final chordCellFinder = mainCells.at(currentRegion.localIndex(3, 6) as int);
+    await tester.tap(chordCellFinder);
+    await tester.pumpAndSettle();
+
+    // 4. Verify that chording affected and revealed the cell in the neighboring region!
+    expect(
+      eastRegion.cellStates[eastRegion.localIndex(3, 0)],
+      equals(CellState.revealed),
+      reason: 'Cell (3, 0) in neighboring East region should be revealed by chording',
+    );
+  });
 }
+
 
 
 
