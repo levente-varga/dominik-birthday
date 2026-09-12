@@ -2202,9 +2202,9 @@ void main() {
     );
     final Map<(int, int), dynamic> regions = state.regions;
 
-    // Verify starting region is marked on the board and on the minimap
-    expect(find.byKey(const ValueKey('starting_region_marker')), findsOneWidget);
+    // Verify starting region is marked on the minimap, and NOT on the board map
     expect(find.byKey(const ValueKey('minimap_starting_region_marker')), findsOneWidget);
+    expect(find.byKey(const ValueKey('starting_region_marker')), findsNothing);
 
     // Trigger initial click to generate starting region (2, 2) and its 8 neighbors
     final mainCells = find.byWidgetPredicate(

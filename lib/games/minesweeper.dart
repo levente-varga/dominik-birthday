@@ -1827,17 +1827,11 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     child: Container(
                       key: const ValueKey('actual_panel_container'),
                       decoration: BoxDecoration(
-                        color: (regionRow == widget.initialRegionY &&
-                                regionCol == widget.initialRegionX)
-                            ? const Color(0xFF2B2930)
-                            : AppColors.panelMedium,
+                        color: AppColors.panelMedium,
                         borderRadius:
                             BorderRadius.circular(widget.panelCornerRadius),
                         border: Border.all(
-                          color: (regionRow == widget.initialRegionY &&
-                                  regionCol == widget.initialRegionX)
-                              ? const Color(0x4DFFFFFF)
-                              : AppColors.outlineDim,
+                          color: AppColors.outlineDim,
                           width: borderWidth,
                         ),
                         boxShadow: [
@@ -1851,17 +1845,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     ),
                   ),
                 ),
-
-                // Starting region marker
-                if (regionRow == widget.initialRegionY &&
-                    regionCol == widget.initialRegionX)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        key: const ValueKey('starting_region_marker'),
-                      ),
-                    ),
-                  ),
 
                 // 2. Cell Grid (Entire Region)
                 Positioned(
