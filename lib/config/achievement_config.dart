@@ -633,3 +633,18 @@ String getFormattedAchievementDescription(
   }
   return achievement.description;
 }
+
+/// Visual and timing configuration for global achievement toast popups.
+abstract final class AchievementToastConfig {
+  /// Top offset below the safe zone boundary.
+  static const double topMargin = 12.0;
+
+  /// Duration for the slide/fade entrance and exit transitions.
+  static const Duration transitionDuration = Duration(milliseconds: 380);
+
+  /// Off-screen translation distance for entrance and exit.
+  static const double slideDistance = -150.0;
+
+  /// Total display duration before dismissing the toast.
+  static const Duration displayDuration = Duration(milliseconds: 4180);
+}

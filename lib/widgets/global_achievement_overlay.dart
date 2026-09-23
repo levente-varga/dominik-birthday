@@ -44,10 +44,13 @@ class _GlobalAchievementOverlayState extends State<GlobalAchievementOverlay>
 
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 380),
+      duration: AchievementToastConfig.transitionDuration,
     );
 
-    _slideAnimation = Tween<double>(begin: -100.0, end: 32.0).animate(
+    _slideAnimation = Tween<double>(
+      begin: AchievementToastConfig.slideDistance,
+      end: 0.0,
+    ).animate(
       CurvedAnimation(
         parent: _animController,
         curve: Curves.easeOutCirc,
@@ -136,7 +139,7 @@ class _GlobalAchievementOverlayState extends State<GlobalAchievementOverlay>
     _animController.forward(from: 0.0);
 
     _dismissTimer?.cancel();
-    _dismissTimer = Timer(const Duration(milliseconds: 4180), () {
+    _dismissTimer = Timer(AchievementToastConfig.displayDuration, () {
       if (!mounted) return;
       if (widget.gameState.isAchievementOverlayPaused) {
         _pauseAndDiscardCurrent();
@@ -182,30 +185,41 @@ class _GlobalAchievementOverlayState extends State<GlobalAchievementOverlay>
         // Main Application View (Navigator / Routes / Screens)
         widget.child,
 
-        // Global Achievement Toast Overlay (Sits ABOVE all screens)
+        // Global Achievement Toast Overlay (Sits ABOVE all screens, below safe zone)
         if (activeToast != null)
-          AnimatedBuilder(
-            animation: _animController,
-            builder: (context, child) {
-              return Positioned(
-                top: _slideAnimation.value,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: FadeTransition(
-                    opacity: _fadeAnimation,
-                    child: Material(
-                      type: MaterialType.transparency,
-                      child: _AchievementToastWidget(
-                        key: ValueKey(activeToast.id),
-                        achievement: activeToast,
-                        gameState: widget.gameState,
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: AnimatedBuilder(
+                animation: _animController,
+                builder: (context, child) {
+                  return Padding(
+                    padding: const EdgeInsets.only(
+                      top: AchievementToastConfig.topMargin,
+                    ),
+                    child: Transform.translate(
+                      offset: Offset(0, _slideAnimation.value),
+                      child: Center(
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: _AchievementToastWidget(
+                              key: ValueKey(activeToast.id),
+                              achievement: activeToast,
+                              gameState: widget.gameState,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              );
-            },
+                  );
+                },
+              ),
+            ),
           ),
       ],
     );

@@ -47,16 +47,7 @@ class _RunScreenState extends State<RunScreen>
   }
 
   void _onGameStateChanged() {
-    if (!_gs.isRunActive && mounted && !_isTransitioning) {
-      setState(() {
-        _isTransitioning = true;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        }
-      });
-    }
+    // Player stays in the game after defeat; return to menu is handled by the Home button.
   }
 
   @override
@@ -95,18 +86,16 @@ class _RunScreenState extends State<RunScreen>
                       ),
                     ),
                   ),
-                SafeArea(
+                Positioned.fill(
                   child: FadeTransition(
                     opacity: _fadeAnimation,
                     child: KeyedSubtree(
                       key: ValueKey(_gs.currentStageIndex),
-                      child: Center(
-                        child: game.buildGame(
-                          context: context,
-                          onComplete: _onGameComplete,
-                          onFail: _onGameFail,
-                          gameState: _gs,
-                        ),
+                      child: game.buildGame(
+                        context: context,
+                        onComplete: _onGameComplete,
+                        onFail: _onGameFail,
+                        gameState: _gs,
                       ),
                     ),
                   ),
@@ -135,14 +124,7 @@ class _RunScreenState extends State<RunScreen>
   }
 
   void _onGameFail() {
-    if (!mounted || _isTransitioning) return;
-    setState(() {
-      _isTransitioning = true;
-    });
+    if (!mounted) return;
     _gs.failGame();
-    if (mounted) {
-      // Return directly to the main menu
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    }
   }
 }

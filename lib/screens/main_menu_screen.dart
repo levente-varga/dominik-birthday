@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -9,7 +8,6 @@ import '../constants/colors.dart';
 import '../game_state.dart';
 import '../config/achievement_config.dart';
 import '../config/key_slots_config.dart';
-import '../config/config.dart';
 import '../game_registry.dart';
 import '../config/skill_tree_config.dart';
 import '../widgets/menu_button.dart';
@@ -19,13 +17,14 @@ import 'skill_tree_screen.dart';
 import 'statistics_screen.dart';
 import '../widgets/confirm_popup.dart';
 import '../widgets/completionist_reward_popup.dart';
+import '../widgets/options_popup.dart';
 import '../generated/embedded_assets.dart';
 
 /// The main menu of the Birthday Gauntlet.
 ///
 /// Displays:
 /// - The persistent key board (15 character slots) at the top.
-/// - Buttons: Start Run, Skill Tree, Statistics, Quit.
+/// - Buttons: Start Run, Skill Tree, Statistics, Options.
 class MainMenuScreen extends StatefulWidget {
   final GameStateManager gameState;
 
@@ -561,16 +560,16 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // 1. Quit (Side - smallest: 46px)
+                            // 1. Options (Side - smallest: 46px)
                             SizedBox(
                               width: 46,
                               height: 46,
                               child: MenuButton(
-                                label: 'Quit',
-                                icon: Icons.exit_to_app_rounded,
+                                label: 'Options',
+                                icon: Icons.settings_rounded,
                                 size: 46,
                                 iconSize: 22,
-                                onPressed: () => exit(0),
+                                onPressed: () => showOptionsPopup(context),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -799,10 +798,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 }
 
 // ── Key board widget ───────────────────────────────────────────────────────
-
-IconData _stageIcon(int stage) {
-  return BaseGameConfig.getIconForStageNumber(stage);
-}
 
 /// Timings for the 15 completionist golden slot flip reveals.
 /// Starts slow, accelerates around midway, and settles into a fast, consistent cadence for the second half.
@@ -1225,7 +1220,7 @@ class _KeyBoardState extends State<_KeyBoard>
                 ),
               ),
               child: Icon(
-                _stageIcon(stage),
+                Icons.circle,
                 size: 12,
                 color: AppColors.textBright,
               ),

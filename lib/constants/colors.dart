@@ -113,6 +113,10 @@ abstract final class AppColors {
   static const Color greenMedium = Color(0xFF28492C);  // ~0.35
   static const Color greenBright = Color(0xFF449748);  // ~0.85
 
+  static const Color blueDim = Color(0xFF1A2B3D);      // ~0.20
+  static const Color blueMedium = Color(0xFF264766);   // ~0.35 (pale blue for started minimap regions)
+  static const Color blueBright = Color(0xFF3B72A0);   // ~0.85
+
   static const Color redDim = Color(0xFF411C1E);
   static const Color redMedium = Color(0xFF622323);
   static const Color redAccentDim = Color(0xFF8A3235);
