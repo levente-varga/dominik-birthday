@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -142,7 +141,14 @@ void main() {
     expect(activeSector(3, 3), findsOneWidget);
   });
 
-  testWidgets('Clicking on the minimap opens empty popup dialog matching main menu popups', (tester) async {
+  testWidgets('Clicking on minimap expands it to center with unified padding and closes on tap anywhere', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
     final game = MinesweeperGame();
 
     await tester.pumpWidget(
@@ -161,25 +167,247 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Find the minimap selector in top right corner
+    final scaffoldSize = tester.getSize(find.byType(Scaffold));
+
+    // Find the minimap selector in top header
     final minimapFinder = find.byKey(const ValueKey('minimap_selector'));
     expect(minimapFinder, findsOneWidget);
+
+    final initialRect = tester.getRect(minimapFinder);
+    expect(initialRect.bottom, equals(scaffoldSize.height - MinesweeperConfig.headerControlTop));
+
+    // Verify AnimatedPositioned curve uses Curves.easeOutCirc
+    final animatedPositioned = tester.widget<AnimatedPositioned>(
+      find.ancestor(
+        of: minimapFinder,
+        matching: find.byType(AnimatedPositioned),
+      ),
+    );
+    expect(animatedPositioned.curve, equals(Curves.easeOutCirc));
+    expect(MinesweeperConfig.minimapExpandCurve, equals(Curves.easeOutCirc));
 
     // Tap on the minimap
     await tester.tap(minimapFinder);
     await tester.pumpAndSettle();
 
-    // Verify empty popup is shown matching main menu popup structure
-    expect(find.byKey(const ValueKey('minimap_popup_container')), findsOneWidget);
-    final closeBtn = find.byIcon(Icons.close_rounded);
-    expect(closeBtn, findsOneWidget);
+    // Verify popup dialog is NOT shown
+    expect(find.byKey(const ValueKey('minimap_popup_container')), findsNothing);
 
-    // Close popup
-    await tester.tap(closeBtn);
+    // Verify minimap expanded: retains square shape and is centered
+    final expandedRect = tester.getRect(minimapFinder);
+    expect(expandedRect.width, equals(expandedRect.height));
+    final expectedSize = scaffoldSize.width < scaffoldSize.height
+        ? (scaffoldSize.width - (2 * MinesweeperConfig.minimapExpandedPadding))
+        : (scaffoldSize.height - (2 * MinesweeperConfig.minimapExpandedPadding));
+    expect(expandedRect.width, closeTo(expectedSize, 1.0));
+    expect(
+      expandedRect.top,
+      closeTo((scaffoldSize.height - expandedRect.height) / 2.0, 1.0),
+    );
+
+    // Verify active minimap sector is centered inside expanded minimap
+    final overlayFinder = find.byKey(const ValueKey('active_minimap_sector'));
+    expect(overlayFinder, findsOneWidget);
+    final overlayRect = tester.getRect(overlayFinder);
+    expect(overlayRect.center.dx, closeTo(expandedRect.center.dx, 1.0));
+    expect(overlayRect.center.dy, closeTo(expandedRect.center.dy, 1.0));
+
+    // Verify corner radius increased proportionally with expanded/collapsed size ratio
+    final expandedContainer = tester.widget<Container>(
+      find.descendant(
+        of: minimapFinder,
+        matching: find.byType(Container),
+      ).first,
+    );
+    final expandedDecoration = expandedContainer.decoration as BoxDecoration;
+    final expectedSizeRatio = expandedRect.width / initialRect.width;
+    final expectedRadius = MinesweeperConfig.minimapRadius * expectedSizeRatio;
+    final expectedInnerRadius = MinesweeperConfig.minimapInnerRadius * expectedSizeRatio;
+    expect(
+      (expandedDecoration.borderRadius as BorderRadius).topLeft.x,
+      closeTo(expectedRadius, 0.01),
+    );
+
+    final expandedClip = tester.widget<ClipRRect>(
+      find.descendant(
+        of: minimapFinder,
+        matching: find.byType(ClipRRect),
+      ).first,
+    );
+    expect(
+      (expandedClip.borderRadius as BorderRadius).topLeft.x,
+      closeTo(expectedInnerRadius, 0.01),
+    );
+
+    // Tap anywhere on the expanded minimap to dismiss
+    await tester.tap(minimapFinder);
     await tester.pumpAndSettle();
 
-    // Verify popup is dismissed
-    expect(find.byKey(const ValueKey('minimap_popup_container')), findsNothing);
+    // Verify minimap returns to resting bottom position and corner radius returns to base
+    final dismissedRect = tester.getRect(minimapFinder);
+    expect(dismissedRect.bottom, equals(scaffoldSize.height - MinesweeperConfig.headerControlTop));
+    expect(dismissedRect.height, equals(initialRect.height));
+
+    final collapsedContainer = tester.widget<Container>(
+      find.descendant(
+        of: minimapFinder,
+        matching: find.byType(Container),
+      ).first,
+    );
+    final collapsedDecoration = collapsedContainer.decoration as BoxDecoration;
+    expect(
+      (collapsedDecoration.borderRadius as BorderRadius).topLeft.x,
+      closeTo(MinesweeperConfig.minimapRadius, 0.01),
+    );
+
+    final collapsedClip = tester.widget<ClipRRect>(
+      find.descendant(
+        of: minimapFinder,
+        matching: find.byType(ClipRRect),
+      ).first,
+    );
+    expect(
+      (collapsedClip.borderRadius as BorderRadius).topLeft.x,
+      closeTo(MinesweeperConfig.minimapInnerRadius, 0.01),
+    );
+
+    // Re-expand and test dismiss by tapping outside the minimap on the barrier
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(minimapFinder).top,
+      closeTo((scaffoldSize.height - expandedRect.height) / 2.0, 1.0),
+    );
+
+    final barrierFinder = find.byKey(const ValueKey('minimap_barrier'));
+    expect(barrierFinder, findsOneWidget);
+    await tester.tapAt(tester.getTopLeft(barrierFinder) + const Offset(10.0, 10.0));
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(minimapFinder).bottom, equals(scaffoldSize.height - MinesweeperConfig.headerControlTop));
+  });
+
+  testWidgets('Extended minimap drag snaps selection with ease-out, clamps bounds, and tapping inside/outside collapses and navigates', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final game = MinesweeperGame(lockInaccessibleRegions: false);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final minimapFinder = find.byKey(const ValueKey('minimap_selector'));
+    expect(minimapFinder, findsOneWidget);
+
+    // Initial state: starts at (2, 2) -> sector [3, 3]
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    // 1. Tap to expand minimap
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    // Verify config settings
+    expect(MinesweeperConfig.minimapJumpCurve, equals(Curves.easeOut));
+    expect(MinesweeperConfig.minimapJumpDuration, equals(const Duration(milliseconds: 180)));
+
+    // While extended, sector [3, 3] is initially selected
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    Future<void> panMinimap(Offset delta) async {
+      final gesture = await tester.startGesture(tester.getCenter(minimapFinder));
+      final slopOffset = Offset(
+        delta.dx != 0 ? (delta.dx > 0 ? 19.0 : -19.0) : 0,
+        delta.dy != 0 ? (delta.dy > 0 ? 19.0 : -19.0) : 0,
+      );
+      await gesture.moveBy(slopOffset);
+      await gesture.moveBy(delta);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    // 2. Drag minimap to the left: moving map left pulls column 3 (1-indexed 4) to center
+    await panMinimap(const Offset(-15.0, 0));
+
+    // Verify selected region jumped to [4, 3] (col 3, row 2)
+    expect(find.byKey(const ValueKey('active_minimap_sector_4_3')), findsOneWidget);
+
+    // 3. Test boundary clamping: drag extremely far left (beyond maxCol = 4, 1-indexed 5)
+    await panMinimap(const Offset(-500.0, 0));
+
+    // Should clamp to sector [5, 3] (col 4, row 2) and NOT go out of bounds to [6, 3]
+    expect(find.byKey(const ValueKey('active_minimap_sector_5_3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('active_minimap_sector_6_3')), findsNothing);
+
+    // Drag extremely far right (beyond minCol = 0, 1-indexed 1)
+    await panMinimap(const Offset(1000.0, 0));
+
+    // Should clamp to sector [1, 3] (col 0, row 2) and NOT go out of bounds to [0, 3]
+    expect(find.byKey(const ValueKey('active_minimap_sector_1_3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('active_minimap_sector_0_3')), findsNothing);
+
+    // Drag extremely far up (beyond maxRow = 4, 1-indexed 5)
+    await panMinimap(const Offset(0, -500.0));
+
+    // Should clamp to sector [1, 5] (col 0, row 4)
+    expect(find.byKey(const ValueKey('active_minimap_sector_1_5')), findsOneWidget);
+
+    // Drag extremely far down (beyond minRow = 0, 1-indexed 1)
+    await panMinimap(const Offset(0, 1000.0));
+
+    // Should clamp to sector [1, 1] (col 0, row 0)
+    expect(find.byKey(const ValueKey('active_minimap_sector_1_1')), findsOneWidget);
+
+    // 4. Drag back to sector [4, 3] (from col 0, row 0 to col 3, row 2: deltaX = -45, deltaY = -30)
+    await panMinimap(const Offset(-45.0, -30.0));
+    expect(find.byKey(const ValueKey('active_minimap_sector_4_3')), findsOneWidget);
+
+    // 5. Tap inside the minimap to collapse and navigate to selected region [4, 3]
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    // Verify minimap collapsed back to bottom bar
+    expect(tester.getRect(minimapFinder).bottom, equals(800.0 - MinesweeperConfig.headerControlTop));
+
+    // Verify current region is now [4, 3] (col 3, row 2)
+    expect(find.byKey(const ValueKey('active_minimap_sector_4_3')), findsOneWidget);
+
+    // 6. Test tapping outside the minimap on the barrier to collapse and navigate:
+    // Expand again
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    // Drag to sector [2, 3] (from col 3, row 2 to col 1, row 2: deltaX = +30)
+    await panMinimap(const Offset(30.0, 0));
+    expect(find.byKey(const ValueKey('active_minimap_sector_2_3')), findsOneWidget);
+
+    // Tap outside on the barrier (top-left corner of screen, safely outside centered minimap)
+    final barrierFinder = find.byKey(const ValueKey('minimap_barrier'));
+    expect(barrierFinder, findsOneWidget);
+    await tester.tapAt(tester.getTopLeft(barrierFinder) + const Offset(10.0, 10.0));
+    await tester.pumpAndSettle();
+
+    // Verify minimap collapsed back to bottom bar
+    expect(tester.getRect(minimapFinder).bottom, equals(800.0 - MinesweeperConfig.headerControlTop));
+
+    // Verify current region is now [2, 3] (col 1, row 2)
+    expect(find.byKey(const ValueKey('active_minimap_sector_2_3')), findsOneWidget);
   });
 
   testWidgets('Keyboard arrow keys and WASD navigate regions', (tester) async {
@@ -382,7 +610,7 @@ void main() {
     }
   });
 
-  testWidgets('Neighbor cells are wrapped in IgnorePointer and are not interactable', (tester) async {
+  testWidgets('All cells across accessible adjacent regions are interactable (non-interactive restriction removed)', (tester) async {
     final game = MinesweeperGame(lockInaccessibleRegions: false);
 
     await tester.pumpWidget(
@@ -410,11 +638,21 @@ void main() {
     );
     expect(neighborWidgets, findsNWidgets(expectedNeighborCount));
 
-    // Verify neighbor cells have null callbacks and cannot be interacted with
+    int interactableCount = 0;
+    int nonInteractableCount = 0;
     for (final neighbor in tester.widgetList(neighborWidgets)) {
-      expect((neighbor as dynamic).onTap, isNull);
-      expect((neighbor as dynamic).onLongPress, isNull);
+      if ((neighbor as dynamic).isInteractable == true) {
+        interactableCount++;
+        expect((neighbor as dynamic).onTap, isNotNull);
+        expect((neighbor as dynamic).onLongPress, isNotNull);
+      } else {
+        nonInteractableCount++;
+        expect((neighbor as dynamic).onTap, isNull);
+        expect((neighbor as dynamic).onLongPress, isNull);
+      }
     }
+    expect(interactableCount, equals(expectedNeighborCount));
+    expect(nonInteractableCount, equals(0));
   });
 
   testWidgets('Normal reveals and auto exploration do not reveal or affect cells in other regions', (tester) async {
@@ -473,7 +711,7 @@ void main() {
     }
   });
 
-  testWidgets('Game area gradient overlay is rendered on top of the entire board area, leaving centered active region unaffected', (tester) async {
+  testWidgets('Game area gradient overlays are completely removed and all panels render without overlay', (tester) async {
     final game = MinesweeperGame();
 
     await tester.pumpWidget(
@@ -492,36 +730,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Exactly 1 game_area_gradient_overlay exists on top of the board
-    final overlayFinder = find.byKey(const ValueKey('game_area_gradient_overlay'));
-    expect(overlayFinder, findsOneWidget);
-
-    // Overlays per region panel are removed
+    // Gradient overlays are completely removed
+    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsNothing);
     expect(find.byKey(const ValueKey('panel_gradient_overlay')), findsNothing);
 
-    // Verify CustomPaint with GameAreaGradientPainter
-    final customPaint = tester.widget<CustomPaint>(overlayFinder);
-    expect(customPaint.painter, isA<GameAreaGradientPainter>());
-    final painter = customPaint.painter! as GameAreaGradientPainter;
-
-    expect(painter.nearAlpha, equals(0.0));
-    expect(painter.farAlpha, equals(1.0));
-    expect(painter.style, equals(OverlayGradientStyle.splitLinear));
-
-    // Center cutout width and height match panelWidth and panelHeight
-    final activeGridWidth = MinesweeperConfig.regionCols *
-        (MinesweeperConfig.cellSize + MinesweeperConfig.cellGap);
-    final activeGridHeight = MinesweeperConfig.regionRows *
-        (MinesweeperConfig.cellSize + MinesweeperConfig.cellGap);
-    final expectedPanelWidth =
-        activeGridWidth + (MinesweeperConfig.boardPadding * 2) + 3.0; // borderWidth * 2
-    final expectedPanelHeight =
-        activeGridHeight + (MinesweeperConfig.boardPadding * 2) + 3.0;
-
-    expect(painter.centerRect.width, closeTo(expectedPanelWidth, 0.01));
-    expect(painter.centerRect.height, closeTo(expectedPanelHeight, 0.01));
-
-    // Center panel remains fully interactable and unaffected while centered
+    // Center panel remains fully interactable and unaffected
     final centerCell = find.byWidgetPredicate(
       (widget) =>
           widget.runtimeType.toString() == '_RegionCellWidget' &&
@@ -702,7 +915,7 @@ void main() {
   });
 
   testWidgets(
-      'Entire neighbor panels are rendered underneath game area gradient overlay with diagonally split corners',
+      'Entire neighbor panels are rendered as actual panels without gradient overlays',
       (tester) async {
     final game = MinesweeperGame(lockInaccessibleRegions: false);
 
@@ -729,22 +942,9 @@ void main() {
     // Adjacent panel outline is completely removed
     expect(find.byKey(const ValueKey('adjacent_panel_outline')), findsNothing);
 
-    // Old per-panel overlays are removed
+    // Per-panel and game area gradient overlays are completely removed
     expect(find.byKey(const ValueKey('panel_gradient_overlay')), findsNothing);
-
-    // The single game area gradient overlay sits atop all panels
-    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsOneWidget);
-
-    // Verify painter draws split linear gradients without throwing
-    final customPaint = tester.widget<CustomPaint>(
-      find.byKey(const ValueKey('game_area_gradient_overlay')),
-    );
-    final painter = customPaint.painter! as GameAreaGradientPainter;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    painter.paint(canvas, const Size(557, 557));
-    final picture = recorder.endRecording();
-    expect(picture, isNotNull);
+    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsNothing);
 
     // Begin a drag to the left (bring in the East adjacent panel)
     final gesture = await tester.startGesture(const Offset(200, 200));
@@ -759,9 +959,9 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    // In the newly active region: 9 actual containers, game area overlay persists
+    // In the newly active region: 9 actual containers, no gradient overlay
     expect(find.byKey(const ValueKey('actual_panel_container')), findsNWidgets(9));
-    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsOneWidget);
+    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsNothing);
   });
 
   testWidgets(
@@ -831,7 +1031,7 @@ void main() {
   });
 
   testWidgets(
-      'Neighbor regions are faded to 50% opacity, and swipe cross-fades current (0% to 50% transparency) and incoming (50% to 0% transparency)',
+      'Visible regions remain fully opaque (1.0 opacity) without fading during idle and swipe traversal',
       (tester) async {
     final game = MinesweeperGame(lockInaccessibleRegions: false, swipeThreshold: 64.0);
 
@@ -852,7 +1052,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // In idle state at middle region (2,2):
-    // 1. Current selected region has opacity 1.0 (0% transparency)
+    // 1. Current selected region has opacity 1.0
     final currentPanelOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_0')),
@@ -861,14 +1061,14 @@ void main() {
     );
     expect(currentPanelOpacity.opacity, equals(1.0));
 
-    // 2. Neighbor regions are faded to 50% opacity (50% transparency)
+    // 2. Neighbor regions are fully opaque 1.0 (no dimming/fading)
     final eastNeighborOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_1')),
         matching: find.byType(Opacity),
       ).first,
     );
-    expect(eastNeighborOpacity.opacity, equals(0.50));
+    expect(eastNeighborOpacity.opacity, equals(1.0));
 
     final northNeighborOpacity = tester.widget<Opacity>(
       find.descendant(
@@ -876,16 +1076,14 @@ void main() {
         matching: find.byType(Opacity),
       ).first,
     );
-    expect(northNeighborOpacity.opacity, equals(0.50));
+    expect(northNeighborOpacity.opacity, equals(1.0));
 
-    // 3. While dragging below threshold (e.g. -30px, where swipeThreshold is 50.0):
+    // 3. While dragging below threshold (-30px, where swipeThreshold is 64.0):
     final gesture = await tester.startGesture(const Offset(250, 250));
     await gesture.moveBy(const Offset(-30, 0));
     await tester.pump();
 
-    // No proportional fade occurs while dragging under threshold:
-    // Current region stays at 1.0 opacity (0% transparency)
-    // Incoming region stays at 0.50 opacity (50% transparency)
+    // Both remain 1.0 opacity
     final underThresholdCurrentOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_0')),
@@ -899,25 +1097,18 @@ void main() {
       ).first,
     );
     expect(underThresholdCurrentOpacity.opacity, equals(1.0));
-    expect(underThresholdIncomingOpacity.opacity, equals(0.50));
+    expect(underThresholdIncomingOpacity.opacity, equals(1.0));
     expect(activeSector(3, 3), findsOneWidget);
 
-    // 4. Drag reaches and goes over threshold (move -40px further to -70px total, threshold is 64):
+    // 4. Drag reaches and goes over threshold (move -40px further to -70px total):
     await gesture.moveBy(const Offset(-40, 0));
     await tester.pump();
-    // Mid-animation:
-    await tester.pump(const Duration(milliseconds: 100));
-    final midFadeCurrentOpacity = tester.widget<Opacity>(
-      find.descendant(
-        of: find.byKey(const ValueKey('region_panel_0_0')),
-        matching: find.byType(Opacity),
-      ).first,
-    );
-    expect(midFadeCurrentOpacity.opacity, lessThan(1.0));
-    expect(midFadeCurrentOpacity.opacity, greaterThan(0.50));
+    await tester.pump(const Duration(milliseconds: 250));
 
-    // Full animation completes while user's finger is still down!
-    await tester.pump(const Duration(milliseconds: 150));
+    // Minimap selected region flipped to Sector [4, 3]!
+    expect(activeSector(4, 3), findsOneWidget);
+
+    // Regions remain 1.0 opacity
     final flippedCurrentOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_0')),
@@ -930,27 +1121,14 @@ void main() {
         matching: find.byType(Opacity),
       ).first,
     );
-    expect(flippedCurrentOpacity.opacity, equals(0.50));
+    expect(flippedCurrentOpacity.opacity, equals(1.0));
     expect(flippedIncomingOpacity.opacity, equals(1.0));
-    // Minimap selected region flipped to Sector [4, 3]!
-    expect(activeSector(4, 3), findsOneWidget);
-
-    // Other neighbors stay at 50% opacity
-    final draggingOtherNeighborOpacity = tester.widget<Opacity>(
-      find.descendant(
-        of: find.byKey(const ValueKey('region_panel_-1_0')),
-        matching: find.byType(Opacity),
-      ).first,
-    );
-    expect(draggingOtherNeighborOpacity.opacity, equals(0.50));
 
     // 5. Cancel traversal by dragging back below threshold (drag +50px, delta is now -20px):
     await gesture.moveBy(const Offset(50, 0));
     await tester.pump();
-    // Mid-reverse:
-    await tester.pump(const Duration(milliseconds: 100));
-    // Reverse animation completes:
-    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump(const Duration(milliseconds: 250));
+
     final reversedCurrentOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_0')),
@@ -964,7 +1142,7 @@ void main() {
       ).first,
     );
     expect(reversedCurrentOpacity.opacity, equals(1.0));
-    expect(reversedIncomingOpacity.opacity, equals(0.50));
+    expect(reversedIncomingOpacity.opacity, equals(1.0));
     // Minimap selected region flipped back to Sector [3, 3]!
     expect(activeSector(3, 3), findsOneWidget);
 
@@ -977,7 +1155,6 @@ void main() {
     await tester.pumpAndSettle();
 
     // In newly active region:
-    // New center region (0, 0) is at 1.0 opacity
     final newCenterOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_0')),
@@ -986,19 +1163,18 @@ void main() {
     );
     expect(newCenterOpacity.opacity, equals(1.0));
 
-    // Old center region (now west neighbor (0, -1)) is at 0.50 opacity
     final oldCenterOpacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_-1')),
         matching: find.byType(Opacity),
       ).first,
     );
-    expect(oldCenterOpacity.opacity, equals(0.50));
+    expect(oldCenterOpacity.opacity, equals(1.0));
     expect(activeSector(4, 3), findsOneWidget);
   });
 
   testWidgets(
-      'Cells cannot be revealed or flagged while panel is animating, and neighbor cells cannot be interacted with',
+      'Cells cannot be revealed or flagged while panel is animating, but all visible cells are interactable at rest',
       (tester) async {
     final game = MinesweeperGame(lockInaccessibleRegions: false);
     await tester.pumpWidget(
@@ -1017,7 +1193,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 1. Neighbor cells cannot be interacted with when board is at rest
+    // 1. Neighbor cells are interactable when board is at rest
     final neighborFinder = find.byWidgetPredicate(
       (widget) =>
           widget.runtimeType.toString() == '_RegionCellWidget' &&
@@ -1025,7 +1201,7 @@ void main() {
     );
     expect(neighborFinder, findsWidgets);
     final firstNeighbor = tester.widget(neighborFinder.first);
-    expect((firstNeighbor as dynamic).isInteractable, isFalse);
+    expect((firstNeighbor as dynamic).isInteractable, isTrue);
 
     // 2. Main panel cells are interactable when not animating
     final mainFinder = find.byWidgetPredicate(
@@ -1113,7 +1289,7 @@ void main() {
   });
 
   testWidgets(
-      'OverlayGradientStyle.radial alternative renders radial gradient without throwing and handles region navigation',
+      'Passing overlayGradientStyle does not throw and game navigation works without gradient overlay',
       (tester) async {
     final game = MinesweeperGame(
       overlayGradientStyle: OverlayGradientStyle.radial,
@@ -1136,20 +1312,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final overlayFinder = find.byKey(const ValueKey('game_area_gradient_overlay'));
-    expect(overlayFinder, findsOneWidget);
+    // Gradient overlay is completely removed
+    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsNothing);
 
-    final customPaint = tester.widget<CustomPaint>(overlayFinder);
-    final painter = customPaint.painter! as GameAreaGradientPainter;
-    expect(painter.style, equals(OverlayGradientStyle.radial));
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    painter.paint(canvas, const Size(557, 557));
-    final picture = recorder.endRecording();
-    expect(picture, isNotNull);
-
-    // Verify directional swipe works under radial overlay
+    // Verify directional swipe works smoothly
     final centerCell = find.byWidgetPredicate(
       (widget) =>
           widget.runtimeType.toString() == '_RegionCellWidget' &&
@@ -1397,7 +1563,7 @@ void main() {
   });
 
   testWidgets(
-      'Newly unlocked neighbor region fades in smoothly from 0.0 opacity to neighbor base opacity',
+      'Newly unlocked neighbor region fades in smoothly from 0.0 opacity to 1.0 opacity',
       (tester) async {
     final game = MinesweeperGame();
 
@@ -1450,16 +1616,23 @@ void main() {
     await tester.pump(const Duration(milliseconds: 175));
     final midOpacity = getEastPanelOpacity();
     expect(midOpacity, greaterThan(0.0));
-    expect(midOpacity, lessThan(0.50));
+    expect(midOpacity, lessThan(1.0));
 
     // Complete the animation
     await tester.pumpAndSettle();
-    expect(getEastPanelOpacity(), equals(0.50));
+    expect(getEastPanelOpacity(), equals(1.0));
   });
 
   testWidgets(
-      'Minimap is centered, mine counter left-aligned, and pause button right-aligned with resting region, remaining stationary during swipe',
+      'Minimap is centered, mine counter left-aligned, and pause button right-aligned with resting control bar, remaining stationary during swipe',
       (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
     bool pauseTapped = false;
     final game = MinesweeperGame(
       lockInaccessibleRegions: false,
@@ -1485,33 +1658,55 @@ void main() {
     await tester.pumpAndSettle();
 
     final centerPanelFinder = find.byKey(const ValueKey('region_panel_0_0'));
+    final controlBarFinder =
+        find.byKey(const ValueKey('control_bar_background'));
     final mineCounterFinder =
         find.byKey(const ValueKey('region_mine_counter_badge'));
     final minimapFinder = find.byKey(const ValueKey('minimap_selector'));
     final pauseButtonFinder = find.byKey(const ValueKey('region_pause_button'));
+    final rankBadgeFinder = find.byKey(const ValueKey('region_rank_badge'));
 
     expect(centerPanelFinder, findsOneWidget);
+    expect(find.byKey(const ValueKey('game_area_gradient_overlay')), findsNothing);
+    expect(controlBarFinder, findsOneWidget);
     expect(mineCounterFinder, findsOneWidget);
+    expect(rankBadgeFinder, findsOneWidget);
     expect(minimapFinder, findsOneWidget);
     expect(pauseButtonFinder, findsOneWidget);
 
     final panelRect = tester.getRect(centerPanelFinder);
+    final controlBarRect = tester.getRect(controlBarFinder);
     final mineCounterRect = tester.getRect(mineCounterFinder);
+    final rankBadgeRect = tester.getRect(rankBadgeFinder);
     final minimapRect = tester.getRect(minimapFinder);
     final pauseButtonRect = tester.getRect(pauseButtonFinder);
 
-    // Left edge of mine counter aligns with left edge of resting selected region
-    expect(mineCounterRect.left, equals(panelRect.left));
+    // Control bar background sits at top across available width
+    expect(controlBarRect.topLeft, equals(Offset.zero));
+    expect(controlBarRect.size.width, equals(400.0));
 
-    // Minimap is centered with resting selected region
+    // Bottom control bar sits at bottom across available width
+    final bottomControlBarFinder =
+        find.byKey(const ValueKey('bottom_control_bar_background'));
+    expect(bottomControlBarFinder, findsOneWidget);
+    final bottomBarRect = tester.getRect(bottomControlBarFinder);
+    expect(bottomBarRect.bottom, equals(800.0));
+
+    // Bottom bar has two empty corner buttons
+    expect(find.byKey(const ValueKey('bottom_bar_left_button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bottom_bar_right_button')), findsOneWidget);
+
+    // Header controls are arranged in a single row: rank badge left, mine count middle, pause button right
+    expect(rankBadgeRect.left, lessThan(mineCounterRect.left));
+    expect(mineCounterRect.right, lessThan(pauseButtonRect.left));
+    expect(mineCounterRect.center.dx, closeTo(panelRect.center.dx, 0.5));
+    expect(rankBadgeRect.top, equals(mineCounterRect.top));
+    expect(pauseButtonRect.top, equals(mineCounterRect.top));
+
+    // Minimap is at the bottom, centered with resting selected region, overflowing top of bottom bar
     expect(minimapRect.center.dx, closeTo(panelRect.center.dx, 0.5));
-
-    // Right edge of pause button aligns with right edge of resting selected region
-    expect(pauseButtonRect.right, equals(panelRect.right));
-
-    // All sit aligned at the same top position
-    expect(mineCounterRect.top, equals(minimapRect.top));
-    expect(pauseButtonRect.top, equals(minimapRect.top));
+    expect(minimapRect.bottom, equals(800.0 - MinesweeperConfig.headerControlTop));
+    expect(minimapRect.top, lessThan(bottomBarRect.top));
 
     // Pause button has pause icon and matches mine counter badge decoration
     expect(
@@ -1530,20 +1725,83 @@ void main() {
     final pauseDecoration = pauseContainer.decoration as BoxDecoration;
     final mineCounterDecoration =
         tester.widget<Container>(mineCounterFinder).decoration as BoxDecoration;
+    final rankDecoration =
+        tester.widget<Container>(rankBadgeFinder).decoration as BoxDecoration;
     expect(pauseDecoration.border, equals(mineCounterDecoration.border));
     expect(pauseDecoration.color, equals(mineCounterDecoration.color));
     expect(
       pauseDecoration.borderRadius,
       equals(mineCounterDecoration.borderRadius),
     );
+    expect(rankDecoration.border, equals(mineCounterDecoration.border));
+    expect(rankDecoration.color, equals(mineCounterDecoration.color));
+    expect(
+      rankDecoration.borderRadius,
+      equals(mineCounterDecoration.borderRadius),
+    );
 
-    // Pause button and mine counter button have the same height, and pause button is square
+    // Rank badge has rank icon and displays rank 0 for starting region
+    expect(
+      find.descendant(
+        of: rankBadgeFinder,
+        matching: find.byIcon(MinesweeperConfig.rankIcon),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: rankBadgeFinder,
+        matching: find.text('0'),
+      ),
+      findsOneWidget,
+    );
+
+    // Pause button size is 42.0 square, and banner badges match button height
     final mineCounterSize = tester.getSize(mineCounterFinder);
     final pauseButtonSize = tester.getSize(pauseButtonFinder);
+    final rankBadgeSize = tester.getSize(rankBadgeFinder);
     expect(pauseButtonSize.height, equals(mineCounterSize.height));
-    expect(pauseButtonSize.width, equals(pauseButtonSize.height));
+    expect(pauseButtonSize.height, equals(rankBadgeSize.height));
+    expect(pauseButtonSize.height, equals(42.0));
+    expect(pauseButtonSize.width, equals(42.0));
+    expect(mineCounterSize.height, equals(MinesweeperConfig.headerBadgeHeight));
+
+    // Badges use flag icon size (18.0) and number text size (15.0)
+    final flagIcon = tester.widget<Icon>(
+      find.descendant(
+        of: mineCounterFinder,
+        matching: find.byIcon(MinesweeperConfig.mineCounterIcon),
+      ),
+    );
+    expect(flagIcon.size, equals(MinesweeperConfig.cellFlagIconSize));
+    expect(flagIcon.size, equals(18.0));
+
+    final rankIcon = tester.widget<Icon>(
+      find.descendant(
+        of: rankBadgeFinder,
+        matching: find.byIcon(MinesweeperConfig.rankIcon),
+      ),
+    );
+    expect(rankIcon.size, equals(MinesweeperConfig.cellFlagIconSize));
+    expect(rankIcon.size, equals(18.0));
+
+    final mineText = tester.widget<Text>(
+      find.descendant(
+        of: mineCounterFinder,
+        matching: find.byType(Text),
+      ),
+    );
+    expect(mineText.style?.fontSize, equals(MinesweeperConfig.cellNumberFontSize));
+    expect(mineText.style?.fontSize, equals(15.0));
+
+    final rankText = tester.widget<Text>(
+      find.byKey(const ValueKey('region_rank_text')),
+    );
+    expect(rankText.style?.fontSize, equals(MinesweeperConfig.cellNumberFontSize));
+    expect(rankText.style?.fontSize, equals(15.0));
+
     // Mine counter badge fits its content rather than stretching across the entire available half-width
-    expect(mineCounterSize.width, lessThan((panelRect.width - minimapRect.width) / 2));
+    expect(mineCounterSize.width, lessThan((controlBarRect.width - minimapRect.width) / 2));
 
     // Tapping pause button triggers callback
     await tester.tap(pauseButtonFinder);
@@ -1562,9 +1820,15 @@ void main() {
     final mineCounterDuringDrag = tester.getRect(mineCounterFinder);
     final minimapDuringDrag = tester.getRect(minimapFinder);
     final pauseButtonDuringDrag = tester.getRect(pauseButtonFinder);
-    expect(mineCounterDuringDrag.left, equals(panelRect.left));
+    expect(
+      mineCounterDuringDrag.left,
+      equals(mineCounterRect.left),
+    );
     expect(minimapDuringDrag.center.dx, closeTo(panelRect.center.dx, 0.5));
-    expect(pauseButtonDuringDrag.right, equals(panelRect.right));
+    expect(
+      pauseButtonDuringDrag.right,
+      equals(pauseButtonRect.right),
+    );
 
     await gesture.up();
     await tester.pumpAndSettle();
@@ -1699,8 +1963,8 @@ void main() {
     final sector33Finder = find.byKey(const ValueKey('minimap_sector_3_3'));
     final sector43Finder = find.byKey(const ValueKey('minimap_sector_4_3'));
 
-    // Back layer does NOT show white for selected region (shows greenMedium for revealed cell, panelHigh for neighbor)
-    expect(backLayerColor(3, 3), equals(AppColors.greenMedium));
+    // Back layer does NOT show white for selected region (shows minimapStartedColor for revealed cell, panelHigh for neighbor)
+    expect(backLayerColor(3, 3), equals(MinesweeperConfig.minimapStartedColor));
     expect(backLayerColor(4, 3), equals(AppColors.panelHigh));
     expect(tester.getRect(overlayFinder).center.dx, closeTo(tester.getRect(sector33Finder).center.dx, 0.5));
 
@@ -1728,7 +1992,7 @@ void main() {
     var incomingOp = tester.widget<Opacity>(
       find.descendant(of: find.byKey(const ValueKey('region_panel_0_1')), matching: find.byType(Opacity)).first,
     );
-    expect(currentOp.opacity, equals(0.50));
+    expect(currentOp.opacity, equals(1.0));
     expect(incomingOp.opacity, equals(1.0));
 
     // Iteration 1 reverse: Drag back below threshold (move +50px -> total -20px)
@@ -1744,7 +2008,7 @@ void main() {
       find.descendant(of: find.byKey(const ValueKey('region_panel_0_1')), matching: find.byType(Opacity)).first,
     );
     expect(currentOp.opacity, equals(1.0));
-    expect(incomingOp.opacity, equals(0.50));
+    expect(incomingOp.opacity, equals(1.0));
 
     // Iteration 2: Drag over threshold again (move -60px -> total -80px)
     await gesture.moveBy(const Offset(-60, 0));
@@ -1758,7 +2022,7 @@ void main() {
     incomingOp = tester.widget<Opacity>(
       find.descendant(of: find.byKey(const ValueKey('region_panel_0_1')), matching: find.byType(Opacity)).first,
     );
-    expect(currentOp.opacity, equals(0.50));
+    expect(currentOp.opacity, equals(1.0));
     expect(incomingOp.opacity, equals(1.0));
 
     // Iteration 2 reverse: Drag back below threshold again (move +70px -> total -10px)
@@ -1774,7 +2038,7 @@ void main() {
       find.descendant(of: find.byKey(const ValueKey('region_panel_0_1')), matching: find.byType(Opacity)).first,
     );
     expect(currentOp.opacity, equals(1.0));
-    expect(incomingOp.opacity, equals(0.50));
+    expect(incomingOp.opacity, equals(1.0));
 
     // Release below threshold -> snapback maintains Sector [3, 3]
     await gesture.up();
@@ -1917,7 +2181,6 @@ void main() {
       defaultDecoration.borderRadius,
       equals(BorderRadius.circular(MinesweeperConfig.panelCornerRadius)),
     );
-    expect(defaultDecoration.borderRadius, equals(BorderRadius.circular(14.0)));
 
     // 2. Test custom value (e.g. 24.0)
     final customGame = MinesweeperGame(panelCornerRadius: 24.0);
@@ -2223,21 +2486,19 @@ void main() {
     final startMineList = startRegion.mines as List<int>;
     expect(startMineList.where((m) => m == 1).length, equals(targetMines));
 
-    // Verify all 8 neighbors (at distance 1) have exactly targetMines + 1
+    // Verify all 8 neighbors have expected mines based on distance (targetMines + dist)
     expect(regions.length, greaterThanOrEqualTo(9));
     for (final entry in regions.entries) {
       if (entry.key == (2, 2)) continue;
       if (entry.value.isGenerated as bool) {
-        final r = entry.key.$1;
-        final c = entry.key.$2;
-        final dist = MinesweeperConfig.calculateRegionDistance(r, c, startR: 2, startC: 2);
+        final rank = entry.value.rank as int;
         final expectedMines =
-            MinesweeperConfig.calculateMinesForDistance(dist, baseMines: targetMines);
+            MinesweeperConfig.rankToMineCountFunction(rank, baseMines: targetMines);
         final mineList = entry.value.mines as List<int>;
         final count = mineList.where((m) => m == 1).length;
         expect(count, equals(expectedMines),
             reason:
-                'Region at ${entry.key} (dist $dist) should have exactly $expectedMines mines');
+                'Region at ${entry.key} (rank $rank) should have exactly $expectedMines mines');
         expect(entry.value.mineCount, equals(expectedMines));
         expect(entry.value.isStartingRegion, isFalse);
       }
@@ -2308,7 +2569,8 @@ void main() {
     // 3. Tap on revealed cell (3, 6) in current region to trigger chord
     final chordCellFinder = mainCells.at(currentRegion.localIndex(3, 6) as int);
     await tester.tap(chordCellFinder);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     // 4. Verify that chording affected and revealed the cell in the neighboring region!
     expect(
@@ -2361,6 +2623,18 @@ void main() {
           (widget as dynamic).isNeighbor == false,
     );
 
+    final state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    ) as dynamic;
+    final region = state.regions[(2, 2)];
+    // Ensure cell 0 is safe and has an adjacent mine so it reveals without flood fill cascade
+    region.mines[0] = 0;
+    region.mines[1] = 1;
+    if (region.mines[48] == 1) {
+      region.mines[48] = 0;
+      region.mines[24] = 1;
+    }
+
     // 1. Reveal Top-Left corner tile (index 0, row 0, col 0)
     final topLeftCell = mainCells.at(0);
     await tester.tap(topLeftCell);
@@ -2375,15 +2649,13 @@ void main() {
     expect(find.byKey(const ValueKey('region_panel_1_1')), findsNothing);
     expect(sectorColor(4, 4), equals(Colors.transparent));
 
-    // 2. Reveal Bottom-Right corner tile (index 48, row 6, col 6)
-    final state = tester.state(
-      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
-    ) as dynamic;
-    final region = state.regions[(2, 2)];
+    // Ensure cell 48 is safe after first-click mine placement so tapping it reveals rather than triggers game over
     if (region.mines[48] == 1) {
       region.mines[48] = 0;
       region.mines[24] = 1;
     }
+
+    // 2. Reveal Bottom-Right corner tile (index 48, row 6, col 6)
     final bottomRightCell = mainCells.at(48);
     await tester.tap(bottomRightCell);
     await tester.pumpAndSettle();
@@ -2497,14 +2769,14 @@ void main() {
     );
     expect(sePanelOpacity.opacity, equals(1.0));
 
-    // And East panel (0, 1) should have dropped back to neighbor base opacity (0.50)
+    // And East panel (0, 1) also remains at 1.0 opacity
     final eastPanelAfterSwitch = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('region_panel_0_1')),
         matching: find.byType(Opacity),
       ).first,
     );
-    expect(eastPanelAfterSwitch.opacity, equals(0.50));
+    expect(eastPanelAfterSwitch.opacity, equals(1.0));
 
     // 3. Release: should navigate into South-East (Sector [4, 4])
     await gesture.up();
@@ -2512,7 +2784,7 @@ void main() {
     expect(activeSector(4, 4), findsOneWidget);
   });
 
-  testWidgets('Minimap displays 7x7 sector viewport (70x70px)', (tester) async {
+  testWidgets('Minimap displays 7x7 sector viewport (105x105px)', (tester) async {
     final game = MinesweeperGame(lockInaccessibleRegions: false);
     await tester.pumpWidget(
       MaterialApp(
@@ -2530,14 +2802,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Verify 70x70px viewport in RegionMiniMapSelector
+    // Verify 105x105px viewport in RegionMiniMapSelector
     final minimapSizedBoxFinder = find.descendant(
       of: find.byKey(const ValueKey('minimap_selector')),
       matching: find.byType(SizedBox),
     ).first;
     final minimapSizedBox = tester.widget<SizedBox>(minimapSizedBoxFinder);
-    expect(minimapSizedBox.width, equals(70.0));
-    expect(minimapSizedBox.height, equals(70.0));
+    expect(minimapSizedBox.width, equals(105.0));
+    expect(minimapSizedBox.height, equals(105.0));
 
     // Verify 7x7 sector window cells exist centered around [3, 3]
     expect(find.byKey(const ValueKey('minimap_sector_0_0')), findsOneWidget);
@@ -2595,7 +2867,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('Mid-drag traversal target switching cross-fades opacities smoothly via ease-out', (tester) async {
+  testWidgets('Mid-drag traversal target switching updates candidate and minimap without fading', (tester) async {
     final game = MinesweeperGame(
       lockInaccessibleRegions: false,
       swipeThreshold: 64.0,
@@ -2621,7 +2893,6 @@ void main() {
     final gesture = await tester.startGesture(const Offset(250, 250));
     await gesture.moveBy(const Offset(-70, 0));
     await tester.pump();
-    // Allow East fade-in to complete
     await tester.pump(const Duration(milliseconds: 250));
 
     final eastPanelFinder = find.byKey(const ValueKey('region_panel_0_1'));
@@ -2632,30 +2903,17 @@ void main() {
     ).opacity;
 
     expect(getOpacity(eastPanelFinder), equals(1.0));
-    expect(getOpacity(sePanelFinder), equals(0.50));
+    expect(getOpacity(sePanelFinder), equals(1.0));
+    expect(activeSector(4, 3), findsOneWidget);
 
     // 2. Switch mid-drag to South-East without lifting pointer (dx = -50, dy = -50, dist ~70.7 > 64)
-    // Relative move from (-70, 0) to (-50, -50): moveBy(Offset(20, -50))
     await gesture.moveBy(const Offset(20, -50));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
-    // After 50ms mid-animation, neither target should have snapped in 1 frame
-    await tester.pump(const Duration(milliseconds: 50));
-    final eastMid = getOpacity(eastPanelFinder);
-    final seMid = getOpacity(sePanelFinder);
-
-    // Old target (East) is smoothly fading down (between 0.50 and 1.0)
-    expect(eastMid, lessThan(1.0));
-    expect(eastMid, greaterThan(0.50));
-
-    // New target (South-East) is smoothly fading up (between 0.50 and 1.0)
-    expect(seMid, greaterThan(0.50));
-    expect(seMid, lessThan(1.0));
-
-    // After full fade completes (200ms)
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
     expect(getOpacity(sePanelFinder), equals(1.0));
+    expect(activeSector(4, 4), findsOneWidget);
 
     await gesture.up();
     await tester.pumpAndSettle();
@@ -2699,41 +2957,33 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(getOpacity(centerPanelFinder), equals(0.50));
+    expect(getOpacity(centerPanelFinder), equals(1.0));
     expect(getOpacity(eastPanelFinder), equals(1.0));
-    expect(getOpacity(sePanelFinder), equals(0.50));
+    expect(getOpacity(sePanelFinder), equals(1.0));
 
     // 2. Switch mid-drag to South-East without lifting pointer (Offset(-50, -50))
     await gesture.moveBy(const Offset(20, -50));
     await tester.pump();
 
-    // At each frame during the 200ms cross-fade, center panel must remain steady at 0.50
+    // At each frame during candidate switch, center panel remains steady at 1.0 opacity
     for (int ms = 0; ms <= 200; ms += 25) {
       await tester.pump(const Duration(milliseconds: 25));
       expect(
         getOpacity(centerPanelFinder),
-        equals(0.50),
+        equals(1.0),
         reason: 'Center panel blinked or changed opacity at ms=$ms during candidate switch',
       );
     }
 
     // Verify final states of candidate targets
-    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
     expect(getOpacity(sePanelFinder), equals(1.0));
-    expect(getOpacity(centerPanelFinder), equals(0.50));
+    expect(getOpacity(centerPanelFinder), equals(1.0));
 
     // 3. Pull back towards center below swipeThreshold (distance ~28.3 < 64)
     // From (-50, -50) move by (30, 30) -> new delta (-20, -20)
     await gesture.moveBy(const Offset(30, 30));
     await tester.pump();
-
-    // Center panel should now be fading back to 1.0
-    await tester.pump(const Duration(milliseconds: 100));
-    final midRestoreCenterOpacity = getOpacity(centerPanelFinder);
-    expect(midRestoreCenterOpacity, greaterThan(0.50));
-    expect(midRestoreCenterOpacity, lessThan(1.0));
-
-    // Complete return to center
     await tester.pump(const Duration(milliseconds: 150));
     expect(getOpacity(centerPanelFinder), equals(1.0));
 
@@ -2812,7 +3062,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('Switching drag from discovered region to non-discovered area resets traversal target and fades original region back in', (tester) async {
+  testWidgets('Switching drag from discovered region to non-discovered area resets traversal target without fading', (tester) async {
     final game = MinesweeperGame(
       lockInaccessibleRegions: true,
       swipeThreshold: 64.0,
@@ -2852,7 +3102,7 @@ void main() {
     // Initially at Sector [3, 3] with full opacity
     expect(activeSector(3, 3), findsOneWidget);
     expect(getOpacity(centerPanelFinder), equals(1.0));
-    expect(getOpacity(eastPanelFinder), equals(0.50));
+    expect(getOpacity(eastPanelFinder), equals(1.0));
 
     // 1. Drag past swipeThreshold towards East (discovered region)
     final gesture = await tester.startGesture(const Offset(250, 250));
@@ -2860,8 +3110,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
-    // Traversal target set to East: center dimmed to 0.50, East faded in to 1.0, minimap highlights Sector [4, 3]
-    expect(getOpacity(centerPanelFinder), equals(0.50));
+    // Traversal target set to East: minimap highlights Sector [4, 3], opacities stay 1.0
+    expect(getOpacity(centerPanelFinder), equals(1.0));
     expect(getOpacity(eastPanelFinder), equals(1.0));
     expect(activeSector(4, 3), findsOneWidget);
 
@@ -2869,25 +3119,13 @@ void main() {
     // Move from (-70, 0) to (-50, -50): moveBy(Offset(20, -50))
     await gesture.moveBy(const Offset(20, -50));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     // Traversal target must immediately reset to original region:
     // Minimap selected sector resets to original Sector [3, 3]
     expect(activeSector(3, 3), findsOneWidget);
-
-    // Mid-animation: center panel is fading back in (> 0.50), East panel is fading down (< 1.0)
-    await tester.pump(const Duration(milliseconds: 100));
-    final centerMidOpacity = getOpacity(centerPanelFinder);
-    final eastMidOpacity = getOpacity(eastPanelFinder);
-    expect(centerMidOpacity, greaterThan(0.50));
-    expect(centerMidOpacity, lessThan(1.0));
-    expect(eastMidOpacity, lessThan(1.0));
-    expect(eastMidOpacity, greaterThan(0.50));
-
-    // After animation completes (250ms)
-    await tester.pump(const Duration(milliseconds: 200));
     expect(getOpacity(centerPanelFinder), equals(1.0));
-    expect(getOpacity(eastPanelFinder), equals(0.50));
-    expect(activeSector(3, 3), findsOneWidget);
+    expect(getOpacity(eastPanelFinder), equals(1.0));
 
     // 3. Switch back to East (discovered region) while still dragging past threshold
     // From (-50, -50) to (-70, 0): moveBy(Offset(-20, 50))
@@ -2895,8 +3133,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
-    // Traversal target is restored to East: center dimmed to 0.50, East faded to 1.0, minimap at Sector [4, 3]
-    expect(getOpacity(centerPanelFinder), equals(0.50));
+    // Traversal target is restored to East: minimap at Sector [4, 3], opacities stay 1.0
+    expect(getOpacity(centerPanelFinder), equals(1.0));
     expect(getOpacity(eastPanelFinder), equals(1.0));
     expect(activeSector(4, 3), findsOneWidget);
 
@@ -2952,23 +3190,23 @@ void main() {
   });
 
   test('MinesweeperConfig distance and linear mine scaling functions', () {
-    // 1. Distance calculations (Chebyshev default)
+    // 1. Distance calculations (Manhattan default)
     expect(MinesweeperConfig.calculateRegionDistance(2, 2, startR: 2, startC: 2), equals(0));
     expect(MinesweeperConfig.calculateRegionDistance(1, 2, startR: 2, startC: 2), equals(1)); // North
-    expect(MinesweeperConfig.calculateRegionDistance(1, 3, startR: 2, startC: 2), equals(1)); // North-East (diagonal)
-    expect(MinesweeperConfig.calculateRegionDistance(0, 4, startR: 2, startC: 2), equals(2));
-    expect(MinesweeperConfig.calculateRegionDistance(-1, 5, startR: 2, startC: 2), equals(3));
+    expect(MinesweeperConfig.calculateRegionDistance(1, 3, startR: 2, startC: 2), equals(2)); // North-East (diagonal)
+    expect(MinesweeperConfig.calculateRegionDistance(0, 4, startR: 2, startC: 2), equals(4));
+    expect(MinesweeperConfig.calculateRegionDistance(-1, 5, startR: 2, startC: 2), equals(6));
 
-    // 2. Manhattan distance option
+    // 2. Chebyshev distance option
     expect(
       MinesweeperConfig.calculateRegionDistance(
         1,
         3,
         startR: 2,
         startC: 2,
-        metric: RegionDistanceMetric.manhattan,
+        metric: RegionDistanceMetric.chebyshev,
       ),
-      equals(2),
+      equals(1),
     );
 
     // 3. Linear mine calculation (base + distance)
@@ -2989,8 +3227,249 @@ void main() {
     );
     expect(
       MinesweeperConfig.minesForRegion(4, 2, startR: 2, startC: 2, baseMines: base),
-      equals(9),
+      equals(8),
     );
+
+    // 5. Rank calculations and rank-to-mine count
+    expect(MinesweeperConfig.calculateRegionRank(2, 2, startR: 2, startC: 2), equals(0));
+    expect(MinesweeperConfig.calculateRegionRank(2, 3, startR: 2, startC: 2), equals(1));
+    expect(MinesweeperConfig.calculateRegionRank(0, 4, startR: 2, startC: 2), equals(1));
+    expect(MinesweeperConfig.rankForRegion(2, 2, startR: 2, startC: 2), equals(0));
+    expect(MinesweeperConfig.rankForRegion(3, 3, startR: 2, startC: 2), equals(1));
+    expect(MinesweeperConfig.rankToMineCount(0, baseMines: base), equals(7));
+    expect(MinesweeperConfig.rankToMineCount(1, baseMines: base), equals(8));
+    expect(MinesweeperConfig.rankToMineCount(3, baseMines: base), equals(10));
+  });
+
+  testWidgets(
+      'Region rank badge displays rank 0 for initial region and updates to rank 1 when navigating to adjacent region',
+      (tester) async {
+    final game = MinesweeperGame(lockInaccessibleRegions: false);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final rankBadgeFinder = find.byKey(const ValueKey('region_rank_badge'));
+    expect(rankBadgeFinder, findsOneWidget);
+    expect(
+      find.descendant(
+        of: rankBadgeFinder,
+        matching: find.text('0'),
+      ),
+      findsOneWidget,
+    );
+
+    // Navigate to East adjacent region via keyboard arrow
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+    );
+    final int currentRegionRank = state.currentRegionRank as int;
+
+    // Rank badge now displays current region rank
+    expect(
+      find.descendant(
+        of: rankBadgeFinder,
+        matching: find.text('$currentRegionRank'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Starting region minimap cell has no border and displays masked black dot on active selection', (tester) async {
+    final game = MinesweeperGame();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 1. Verify starting region minimap cell (Sector [3, 3]) has NO border
+    final startSectorCellFinder = find.byKey(const ValueKey('minimap_sector_3_3'));
+    expect(startSectorCellFinder, findsOneWidget);
+    final innerAnimContainer = tester.widget<AnimatedContainer>(
+      find.descendant(
+        of: startSectorCellFinder,
+        matching: find.byType(AnimatedContainer),
+      ),
+    );
+    final sectorBoxDec = innerAnimContainer.decoration as BoxDecoration;
+    expect(sectorBoxDec.border, isNull);
+
+    // Verify back layer has starting region marker
+    expect(find.byKey(const ValueKey('minimap_starting_region_marker')), findsOneWidget);
+
+    // 2. Verify active minimap sector displays masked black dot over starting region
+    final activeDotFinder = find.byKey(const ValueKey('active_minimap_starting_dot'));
+    expect(activeDotFinder, findsOneWidget);
+
+    final activeDotBox = tester.widget<DecoratedBox>(activeDotFinder);
+    final dotDec = activeDotBox.decoration as BoxDecoration;
+    expect(dotDec.color, equals(Colors.black));
+    expect(dotDec.shape, equals(BoxShape.circle));
+
+    // Verify dot is centered inside the active minimap sector
+    final activeSectorFinder = find.byKey(const ValueKey('active_minimap_sector'));
+    expect(activeSectorFinder, findsOneWidget);
+    final sectorRect = tester.getRect(activeSectorFinder);
+    final dotRect = tester.getRect(activeDotFinder);
+    expect(dotRect.center.dx, closeTo(sectorRect.center.dx, 0.5));
+    expect(dotRect.center.dy, closeTo(sectorRect.center.dy, 0.5));
+  });
+
+  testWidgets('Minimap only allows selecting discovered regions and prevents selecting undiscovered ones', (tester) async {
+    final game = MinesweeperGame(lockInaccessibleRegions: true);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final minimapFinder = find.byKey(const ValueKey('minimap_selector'));
+    expect(minimapFinder, findsOneWidget);
+
+    // Expand minimap
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    // Drag helper
+    Future<void> panMinimap(Offset delta) async {
+      final gesture = await tester.startGesture(tester.getCenter(minimapFinder));
+      final slopOffset = Offset(
+        delta.dx != 0 ? (delta.dx > 0 ? 19.0 : -19.0) : 0,
+        delta.dy != 0 ? (delta.dy > 0 ? 19.0 : -19.0) : 0,
+      );
+      await gesture.moveBy(slopOffset);
+      await gesture.moveBy(delta);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    // Try dragging towards undiscovered regions in all directions
+    await panMinimap(const Offset(-100.0, 0));
+    // Should NOT jump to undiscovered sectors (e.g. col 3 or col 4)
+    expect(find.byKey(const ValueKey('active_minimap_sector_4_3')), findsNothing);
+    expect(find.byKey(const ValueKey('active_minimap_sector_5_3')), findsNothing);
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    await panMinimap(const Offset(100.0, 0));
+    expect(find.byKey(const ValueKey('active_minimap_sector_2_3')), findsNothing);
+    expect(find.byKey(const ValueKey('active_minimap_sector_1_3')), findsNothing);
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    // Tap to collapse
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    // Still in starting region [3, 3]
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+  });
+
+  testWidgets('Minimap displays and allows selecting discovered regions more than 2 and 3 distance away in infinite world', (tester) async {
+    final game = MinesweeperGame(
+      isInfiniteWorld: true,
+      lockInaccessibleRegions: false,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => game.buildGame(
+              context: context,
+              onComplete: () {},
+              onFail: () {},
+              gameState: gameState,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Start at (2, 2) -> Sector [3, 3]
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    // Navigate East 4 times -> reaches Sector [7, 3] (Col 6, Row 2: distance 4 from start Col 2)
+    for (int i = 0; i < 4; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.pumpAndSettle();
+    }
+    expect(find.byKey(const ValueKey('active_minimap_sector_7_3')), findsOneWidget);
+
+    // 1. Expand minimap while at Sector [7, 3] (distance 4 away from start)
+    final minimapFinder = find.byKey(const ValueKey('minimap_selector'));
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    // Sector [7, 3] (distance 4 from start) MUST be rendered and selected in minimap
+    expect(find.byKey(const ValueKey('minimap_sector_7_3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('active_minimap_sector_7_3')), findsOneWidget);
+
+    // Sector [6, 3] (distance 3 from start) MUST also be rendered in minimap
+    expect(find.byKey(const ValueKey('minimap_sector_6_3')), findsOneWidget);
+
+    // 2. Drag minimap to the right to move selection back towards Sector [3, 3] (distance 4 away)
+    Future<void> panMinimap(Offset delta) async {
+      final gesture = await tester.startGesture(tester.getCenter(minimapFinder));
+      final slopOffset = Offset(
+        delta.dx != 0 ? (delta.dx > 0 ? 19.0 : -19.0) : 0,
+        delta.dy != 0 ? (delta.dy > 0 ? 19.0 : -19.0) : 0,
+      );
+      await gesture.moveBy(slopOffset);
+      await gesture.moveBy(delta);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    // Drag right by 4 sectors (4 * 15 = 60px) to pull starting region [3, 3] back to center
+    await panMinimap(const Offset(60.0, 0));
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
+
+    // 3. Tap to collapse and navigate back to starting region [3, 3] from distance 4
+    await tester.tap(minimapFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('active_minimap_sector_3_3')), findsOneWidget);
   });
 }
 

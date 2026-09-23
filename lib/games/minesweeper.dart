@@ -8,30 +8,30 @@ import 'package:flutter/services.dart';
 import '../config/achievement_config.dart';
 import '../config/config.dart';
 import '../constants/colors.dart';
-import '../game.dart';
 import '../game_state.dart';
-import '../widgets/game_scaffold.dart';
-import '../widgets/minimap_popup.dart';
+import '../widgets/options_popup.dart';
 import '../widgets/shockwave_layer.dart';
+import 'minesweeper/cell_state.dart';
+import 'minesweeper/inventory.dart';
+import 'minesweeper/minimap_selector.dart';
+import 'minesweeper/region_badges.dart';
+import 'minesweeper/region_data.dart';
+import 'minesweeper/world_generator.dart';
 
-// ── Cell state constants (packed in Uint8List for zero GC overhead) ──────────
+export 'minesweeper/cell_state.dart';
+export 'minesweeper/gradient_painter.dart';
+export 'minesweeper/inventory.dart';
+export 'minesweeper/minimap_selector.dart';
+export 'minesweeper/region_badges.dart';
+export 'minesweeper/region_data.dart';
+export 'minesweeper/world_generator.dart';
 
-abstract final class CellState {
-  static const int unrevealed = 0;
-  static const int revealed = 1;
-  static const int flagged = 2;
-  static const int activatedMine = 3; // The mine the player clicked
-  static const int revealedMine = 4; // Other mines shown upon defeat
-  static const int hiddenNumber = 5; // Anomaly '?'
-}
+part 'minesweeper/region_cell_widget.dart';
 
 // ── Game entry point ───────────────────────────────────────────────────────
 
-class MinesweeperGame extends Game {
-  @override
+class MinesweeperGame {
   final int stageNumber = 1;
-
-  @override
   final String name = 'Minesweeper Sweep';
 
   final double? panelGap;
@@ -59,6 +59,9 @@ class MinesweeperGame extends Game {
   final int? minesPerRegion;
   final double? mineDensity;
   final VoidCallback? onPause;
+  final MinesweeperWorldGenerator? worldGenerator;
+  final Random? random;
+  final List<InventoryItemType?>? initialInventory;
 
   MinesweeperGame({
     this.panelGap,
@@ -86,9 +89,14 @@ class MinesweeperGame extends Game {
     this.minesPerRegion,
     this.mineDensity,
     this.onPause,
+    this.worldGenerator,
+    this.random,
+    this.enableContinuousIdlePulseInTests,
+    this.initialInventory,
   });
 
-  @override
+  final bool? enableContinuousIdlePulseInTests;
+
   Widget buildGame({
     required BuildContext context,
     required VoidCallback onComplete,
@@ -126,13 +134,10 @@ class MinesweeperGame extends Game {
           MinesweeperConfig.gradientNearTransparency,
       gradientFarTransparency: gradientFarTransparency ??
           MinesweeperConfig.gradientFarTransparency,
-      incomingPanelOverlayTransparency: incomingPanelOverlayTransparency ??
-          MinesweeperConfig.incomingPanelOverlayTransparency,
-      touchHighlightColor: touchHighlightColor ?? MinesweeperConfig.touchHighlightColor,
+      touchHighlightColor:
+          touchHighlightColor ?? MinesweeperConfig.touchHighlightColor,
       touchHighlightFadeDuration: touchHighlightFadeDuration ??
           MinesweeperConfig.touchHighlightFadeDuration,
-      adjacentPanelOutlineColor: adjacentPanelOutlineColor ??
-          MinesweeperConfig.adjacentPanelOutlineColor,
       overlayGradientStyle: overlayGradientStyle ??
           MinesweeperConfig.overlayGradientStyle,
       neighborRegionTransparency: neighborRegionTransparency ??
@@ -141,50 +146,17 @@ class MinesweeperGame extends Game {
           MinesweeperConfig.lockInaccessibleRegions,
       regionUnlockFadeDuration: regionUnlockFadeDuration ??
           MinesweeperConfig.regionUnlockFadeDuration,
-      regionsToWin: regionsToWin ?? MinesweeperConfig.regionsToWin,
       isInfiniteWorld: isInfiniteWorld ?? MinesweeperConfig.isInfiniteWorld,
+      enableContinuousIdlePulseInTests: enableContinuousIdlePulseInTests,
       onPause: onPause,
+      worldGenerator: worldGenerator,
+      random: random,
+      initialInventory: initialInventory,
       gameState: gameState,
       onComplete: onComplete,
       onFail: onFail,
     );
   }
-}
-
-// ── Dynamic Region Data Model ───────────────────────────────────────────────
-
-class RegionData {
-  final int r;
-  final int c;
-  final int rows;
-  final int cols;
-  final bool isStartingRegion;
-  late final Uint8List mines; // 1 = mine, 0 = safe
-  late final Uint8List cellStates; // CellState values
-  late final Uint8List adjacent; // cached adjacent mine counts (255 = uncomputed)
-  bool isGenerated = false;
-  bool isUnlocked = false;
-  bool isCleared = false;
-  int mineCount = 0;
-  int flagCount = 0;
-  int revealedCount = 0;
-
-  RegionData({
-    required this.r,
-    required this.c,
-    required this.rows,
-    required this.cols,
-    this.isStartingRegion = false,
-  }) {
-    final size = rows * cols;
-    mines = Uint8List(size);
-    cellStates = Uint8List(size);
-    adjacent = Uint8List(size)..fillRange(0, size, 255);
-  }
-
-  int localIndex(int lr, int lc) => lr * cols + lc;
-  int get safeCells => (rows * cols) - mineCount;
-  bool get allSafeRevealed => revealedCount >= safeCells;
 }
 
 // ── Main game widget ───────────────────────────────────────────────────────
@@ -208,17 +180,18 @@ class _MinesweeperGame extends StatefulWidget {
   final Duration longTapDuration;
   final double gradientNearTransparency;
   final double gradientFarTransparency;
-  final double incomingPanelOverlayTransparency;
   final Color touchHighlightColor;
   final Duration touchHighlightFadeDuration;
-  final Color adjacentPanelOutlineColor;
   final OverlayGradientStyle overlayGradientStyle;
   final double neighborRegionTransparency;
   final bool lockInaccessibleRegions;
   final Duration regionUnlockFadeDuration;
-  final int regionsToWin;
   final bool isInfiniteWorld;
+  final bool? enableContinuousIdlePulseInTests;
   final VoidCallback? onPause;
+  final MinesweeperWorldGenerator? worldGenerator;
+  final Random? random;
+  final List<InventoryItemType?>? initialInventory;
   final GameStateManager gameState;
   final VoidCallback onComplete;
   final VoidCallback onFail;
@@ -242,19 +215,19 @@ class _MinesweeperGame extends StatefulWidget {
     this.longTapDuration = MinesweeperConfig.longTapDuration,
     this.gradientNearTransparency = MinesweeperConfig.gradientNearTransparency,
     this.gradientFarTransparency = MinesweeperConfig.gradientFarTransparency,
-    this.incomingPanelOverlayTransparency =
-        MinesweeperConfig.incomingPanelOverlayTransparency,
     this.touchHighlightColor = MinesweeperConfig.touchHighlightColor,
     this.touchHighlightFadeDuration = MinesweeperConfig.touchHighlightFadeDuration,
-    this.adjacentPanelOutlineColor = MinesweeperConfig.adjacentPanelOutlineColor,
     this.overlayGradientStyle = MinesweeperConfig.overlayGradientStyle,
     this.neighborRegionTransparency =
         MinesweeperConfig.neighborRegionTransparency,
     this.lockInaccessibleRegions = MinesweeperConfig.lockInaccessibleRegions,
     this.regionUnlockFadeDuration = MinesweeperConfig.regionUnlockFadeDuration,
-    this.regionsToWin = MinesweeperConfig.regionsToWin,
     this.isInfiniteWorld = MinesweeperConfig.isInfiniteWorld,
+    this.enableContinuousIdlePulseInTests,
     this.onPause,
+    this.worldGenerator,
+    this.random,
+    this.initialInventory,
     required this.gameState,
     required this.onComplete,
     required this.onFail,
@@ -265,7 +238,7 @@ class _MinesweeperGame extends StatefulWidget {
 }
 
 class _MinesweeperGameState extends State<_MinesweeperGame>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Dynamic regions storage: (regionR, regionC) -> RegionData
   final Map<(int, int), RegionData> _regions = {};
   final Map<(int, int), Set<int>> _forbiddenMineIndices = {};
@@ -276,6 +249,41 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   @visibleForTesting
   Set<(int, int)> get unlockedRegions => _unlockedRegions;
 
+  @visibleForTesting
+  void ensureRegionGenerated(int r, int c) => _ensureRegionGenerated(r, c);
+
+  @visibleForTesting
+  void reveal(int r, int c, int lr, int lc) => _reveal(r, c, lr, lc);
+
+  @visibleForTesting
+  void handleCellTap(int r, int c, int lr, int lc) => _handleCellTap(r, c, lr, lc);
+
+  @visibleForTesting
+  int get currentRegionRank => _currentRegionRank;
+
+  @visibleForTesting
+  void toggleFlag(int r, int c, int lr, int lc) => _toggleFlag(r, c, lr, lc);
+
+  late List<InventoryItemType?> _inventory;
+
+  @visibleForTesting
+  List<InventoryItemType?> get inventory => List.unmodifiable(_inventory);
+
+  @visibleForTesting
+  bool get hasShield => _inventory.contains(InventoryItemType.shield);
+
+  @visibleForTesting
+  void useInventorySlot(int slotIndex) => _useInventorySlot(slotIndex);
+
+  @visibleForTesting
+  int flagAllObviousMines() => _flagAllObviousMines();
+
+  @visibleForTesting
+  bool get minesPlaced => _minesPlaced;
+
+  @visibleForTesting
+  set minesPlaced(bool value) => _minesPlaced = value;
+
   // Active region coordinates (can be any integer coordinate)
   late int _currentRegionRow;
   late int _currentRegionCol;
@@ -284,6 +292,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   bool _gameOver = false;
   bool _gameWon = false;
   bool _hasMisplacedFlag = false;
+  bool _isMinimapExpanded = false;
+  double _currentScale = 1.0;
+  (int, int)? _extendedSelectedRegion;
 
   int _revealedCount = 0;
   int _flagCount = 0;
@@ -299,63 +310,48 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   // ── Swipe & Multi-Panel Transition State ─────────────────────────────────
   late final AnimationController _slideController;
-  late final AnimationController _centerDimController;
-  late final Animation<double> _centerDimAnimation;
-  final Map<(int, int), AnimationController> _candidateFadeControllers = {};
-  final Map<(int, int), Animation<double>> _candidateFadeAnimations = {};
   Animation<Offset>? _offsetAnimation;
-  Animation<double>? _progressAnimation;
-  Animation<double>? _gradientAnimation;
 
-  AnimationController _getCandidateFadeController((int, int) dir) {
-    var controller = _candidateFadeControllers[dir];
-    if (controller == null) {
-      controller = AnimationController(
-        vsync: this,
-        duration: MinesweeperConfig.candidateFadeDuration,
-      );
-      final animation = CurvedAnimation(
-        parent: controller,
-        curve: Curves.easeOut,
-        reverseCurve: Curves.easeOut,
-      );
-      controller.addListener(() {
-        if (mounted) setState(() {});
-      });
-      _candidateFadeControllers[dir] = controller;
-      _candidateFadeAnimations[dir] = animation;
-    }
-    return controller;
-  }
+  // ── Selected Region Border Pulse State ───────────────────────────────────
+  late final AnimationController _entryPulseController;
+  late final Animation<double> _entryPulseAnimation;
+  late final AnimationController _idlePulseController;
+  late final Animation<double> _idlePulseAnimation;
 
-  void _updateCandidateFade({(int, int)? activeDirection}) {
-    if (activeDirection != null) {
-      _getCandidateFadeController(activeDirection).forward();
-    }
-    for (final entry in _candidateFadeControllers.entries) {
-      if (entry.key != activeDirection) {
-        entry.value.reverse();
-      }
-    }
-  }
+  @visibleForTesting
+  AnimationController get entryPulseController => _entryPulseController;
 
-  void _resetCandidateFade() {
-    for (final controller in _candidateFadeControllers.values) {
-      controller.stop();
-      controller.value = 0.0;
-    }
-  }
+  @visibleForTesting
+  AnimationController get idlePulseController => _idlePulseController;
 
-  bool get _isCandidateFading {
-    for (final ctrl in _candidateFadeControllers.values) {
-      if (ctrl.isAnimating) return true;
-    }
-    return false;
-  }
+  @visibleForTesting
+  Animation<double> get entryPulseAnimation => _entryPulseAnimation;
+
+  @visibleForTesting
+  Animation<double> get idlePulseAnimation => _idlePulseAnimation;
+
+  @visibleForTesting
+  void startBorderPulseSequence() => _startBorderPulseSequence();
+
+  @visibleForTesting
+  void resumeIdlePulse() => _resumeIdlePulse();
+
+  @visibleForTesting
+  FocusNode get focusNode => _focusNode;
+
+  @visibleForTesting
+  int get currentRegionRow => _currentRegionRow;
+
+  @visibleForTesting
+  int get currentRegionCol => _currentRegionCol;
+
+  @visibleForTesting
+  AnimationController get slideController => _slideController;
+
+  @visibleForTesting
+  void navigateRegion(int dRow, int dCol) => _navigateRegion(dRow, dCol);
 
   Offset _planeOffset = Offset.zero;
-  double _transitionProgress = 0.0;
-  double _gradientProgress = 0.0;
   bool _isThresholdFlipped = false;
   int _swipeDRow = 0;
   int _swipeDCol = 0;
@@ -373,26 +369,19 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       _isTransitioning ||
       _slideController.isAnimating ||
       _planeOffset != Offset.zero ||
-      _transitionProgress > 0.0 ||
-      _centerDimController.isAnimating ||
-      _isCandidateFading ||
       _swipeDRow != 0 ||
       _swipeDCol != 0;
 
   int get _worldRows => widget.regionsY * widget.regionRows;
   int get _worldCols => widget.regionsX * widget.regionCols;
-  int get _totalWorldCells => _worldRows * _worldCols;
   int get _safeCells =>
-      _totalWorldCells - (_minesPlaced ? _actualMineCount : widget.mineCount);
+      (_worldRows * _worldCols) - (_minesPlaced ? _actualMineCount : widget.mineCount);
 
   int get _currentRegionMineCount {
     final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
     if (!region.isGenerated) {
-      return MinesweeperConfig.minesForRegion(
-        _currentRegionRow,
-        _currentRegionCol,
-        startR: widget.initialRegionY,
-        startC: widget.initialRegionX,
+      return MinesweeperConfig.rankToMineCountFunction(
+        region.rank,
         baseMines: widget.minesPerRegion,
       );
     }
@@ -406,6 +395,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   int get _currentRegionRemainingMines =>
       _currentRegionMineCount - _currentRegionFlagCount;
+
+  int get _currentRegionRank =>
+      _getOrInitRegion(_currentRegionRow, _currentRegionCol).rank;
 
   // ── Unlocked region tracking & fade-in animations ──────────────────────────
   final Set<(int, int)> _unlockedRegions = <(int, int)>{};
@@ -480,10 +472,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _unlockControllers[coord] = controller;
     _unlockAnimations[coord] = animation;
 
-    controller.addListener(() {
-      setState(() {});
-    });
-
     controller.forward().then((_) {
       if (mounted) {
         _unlockControllers.remove(coord)?.dispose();
@@ -496,11 +484,29 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _inventory = widget.initialInventory != null
+        ? List.from(widget.initialInventory!)
+        : [InventoryItemType.shield, InventoryItemType.flagObvious];
     _currentRegionRow = widget.initialRegionY;
     _currentRegionCol = widget.initialRegionX;
     _actualMineCount = widget.isInfiniteWorld
         ? widget.minesPerRegion
         : (widget.regionsX * widget.regionsY * widget.minesPerRegion);
+
+    _worldGenerator = widget.worldGenerator ??
+        MinesweeperWorldGenerator(
+          initialRegionX: widget.initialRegionX,
+          initialRegionY: widget.initialRegionY,
+          isInfiniteWorld: widget.isInfiniteWorld,
+          regionsX: widget.regionsX,
+          regionsY: widget.regionsY,
+          random: widget.random,
+        );
+    if (!widget.isInfiniteWorld && widget.regionsX > 0 && widget.regionsY > 0) {
+      _worldGenerator.pregenerateGrid(widget.regionsY, widget.regionsX);
+    }
+
     _initUnlockedRegions();
 
     _slideController = AnimationController(
@@ -512,44 +518,149 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         if (_offsetAnimation != null) {
           _planeOffset = _offsetAnimation!.value;
         }
-        if (_progressAnimation != null) {
-          _transitionProgress = _progressAnimation!.value;
-        }
-        if (_gradientAnimation != null) {
-          _gradientProgress = _gradientAnimation!.value;
-        }
       });
     });
 
-    _centerDimController = AnimationController(
+    _entryPulseController = AnimationController(
       vsync: this,
-      duration: MinesweeperConfig.candidateFadeDuration,
+      duration: MinesweeperConfig.borderEntryPulseDuration,
     );
-    _centerDimAnimation = CurvedAnimation(
-      parent: _centerDimController,
-      curve: Curves.easeOut,
-      reverseCurve: Curves.easeOut,
+    _entryPulseAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 0.0, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 50.0,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 0.0)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 50.0,
+      ),
+    ]).animate(_entryPulseController);
+
+    _idlePulseController = AnimationController(
+      vsync: this,
+      duration: MinesweeperConfig.borderIdlePulseDuration,
     );
-    _centerDimController.addListener(() {
-      if (mounted) setState(() {});
+    _idlePulseAnimation = CurvedAnimation(
+      parent: _idlePulseController,
+      curve: Curves.easeInOut,
+    );
+
+    _entryPulseController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        if (mounted &&
+            !_gameOver &&
+            !_gameWon &&
+            !_isMinimapExpanded &&
+            !_slideController.isAnimating &&
+            !_isTransitioning &&
+            _dragStartPos == null) {
+          if (_shouldRepeatIdlePulse) {
+            _idlePulseController.repeat(reverse: true);
+          } else {
+            _idlePulseController.forward(from: 0.0).then((_) {
+              if (mounted &&
+                  !_gameOver &&
+                  !_gameWon &&
+                  !_isMinimapExpanded &&
+                  !_slideController.isAnimating &&
+                  !_isTransitioning &&
+                  _dragStartPos == null) {
+                _idlePulseController.reverse();
+              }
+            });
+          }
+        }
+      }
     });
+
+    _startBorderPulseSequence();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _idlePulseController.stop();
+      _entryPulseController.stop();
+    } else if (!_gameOver &&
+        !_gameWon &&
+        !_isMinimapExpanded &&
+        !_isTransitioning &&
+        !_slideController.isAnimating &&
+        _dragStartPos == null) {
+      if (_shouldRepeatIdlePulse) {
+        _idlePulseController.repeat(reverse: true);
+      }
+    }
+  }
+
+  bool get _shouldRepeatIdlePulse {
+    final isTestEnvironment =
+        WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    if (isTestEnvironment) {
+      return widget.enableContinuousIdlePulseInTests ??
+          MinesweeperConfig.enableContinuousIdlePulseInTests;
+    }
+    return MinesweeperConfig.enableContinuousIdlePulse;
+  }
+
+  void _startBorderPulseSequence() {
+    _idlePulseController.stop();
+    _idlePulseController.value = 0.0;
+    if (!_gameOver && !_gameWon && !_isMinimapExpanded) {
+      _entryPulseController.forward(from: 0.0);
+    }
+  }
+
+  void _resumeIdlePulse() {
+    if (!mounted ||
+        _gameOver ||
+        _gameWon ||
+        _isMinimapExpanded ||
+        _isTransitioning ||
+        _slideController.isAnimating ||
+        _entryPulseController.isAnimating) {
+      return;
+    }
+    if (_shouldRepeatIdlePulse) {
+      if (!_idlePulseController.isAnimating) {
+        _idlePulseController.repeat(reverse: true);
+      }
+    } else {
+      if (!_idlePulseController.isAnimating) {
+        _idlePulseController.forward(from: 0.0).then((_) {
+          if (mounted &&
+              !_gameOver &&
+              !_gameWon &&
+              !_isMinimapExpanded &&
+              !_slideController.isAnimating &&
+              !_isTransitioning &&
+              _dragStartPos == null) {
+            _idlePulseController.reverse();
+          }
+        });
+      }
+    }
+  }
+
+  late final MinesweeperWorldGenerator _worldGenerator;
+
+  @visibleForTesting
+  MinesweeperWorldGenerator get worldGenerator => _worldGenerator;
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _focusNode.dispose();
     for (final controller in _unlockControllers.values) {
       controller.dispose();
     }
     _unlockControllers.clear();
     _unlockAnimations.clear();
-    _focusNode.dispose();
     _shockwaveLayerController.dispose();
-    _centerDimController.dispose();
-    for (final controller in _candidateFadeControllers.values) {
-      controller.dispose();
-    }
-    _candidateFadeControllers.clear();
-    _candidateFadeAnimations.clear();
+    _entryPulseController.dispose();
+    _idlePulseController.dispose();
     _slideController.dispose();
     super.dispose();
   }
@@ -564,6 +675,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         cols: widget.regionCols,
         isStartingRegion:
             (r == widget.initialRegionY && c == widget.initialRegionX),
+        rank: _worldGenerator.getOrGenerateRank(r, c),
+        biome: _worldGenerator.getOrGenerateBiome(r, c),
       ),
     );
   }
@@ -579,23 +692,51 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     int lR = localR;
     int lC = localC;
 
-    if (lR < 0) {
+    while (lR < 0) {
       rR -= 1;
       lR += widget.regionRows;
-    } else if (lR >= widget.regionRows) {
+    }
+    while (lR >= widget.regionRows) {
       rR += 1;
       lR -= widget.regionRows;
     }
 
-    if (lC < 0) {
+    while (lC < 0) {
       rC -= 1;
       lC += widget.regionCols;
-    } else if (lC >= widget.regionCols) {
+    }
+    while (lC >= widget.regionCols) {
       rC += 1;
       lC -= widget.regionCols;
     }
 
     return (rR, rC, lR, lC);
+  }
+
+  /// Returns neighbor relative offsets (dr, dc) for a given biome.
+  List<(int, int)> _getNeighborOffsetsForBiome(BiomeType biome) {
+    switch (biome) {
+      case BiomeType.diagonal:
+        return const [(-1, -1), (-1, 1), (1, -1), (1, 1)];
+      case BiomeType.orthogonal:
+        return const [(-1, 0), (1, 0), (0, -1), (0, 1)];
+      case BiomeType.range:
+        return const [
+          (-2, -2), (-2, -1), (-2, 0), (-2, 1), (-2, 2),
+          (-1, -2), (-1, -1), (-1, 0), (-1, 1), (-1, 2),
+          (0, -2),  (0, -1),           (0, 1),  (0, 2),
+          (1, -2),  (1, -1),  (1, 0),  (1, 1),  (1, 2),
+          (2, -2),  (2, -1),  (2, 0),  (2, 1),  (2, 2),
+        ];
+      case BiomeType.regular:
+      case BiomeType.unknown:
+      case BiomeType.random:
+        return const [
+          (-1, -1), (-1, 0), (-1, 1),
+          (0, -1),           (0, 1),
+          (1, -1),  (1, 0),  (1, 1),
+        ];
+    }
   }
 
   void _ensureRegionGenerated(int r, int c) {
@@ -617,11 +758,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
     }
 
-    final regionMines = MinesweeperConfig.minesForRegion(
-      region.r,
-      region.c,
-      startR: widget.initialRegionY,
-      startC: widget.initialRegionX,
+    final regionMines = MinesweeperConfig.rankToMineCountFunction(
+      region.rank,
       baseMines: widget.minesPerRegion,
     );
 
@@ -630,13 +768,51 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       availableIndices.length,
     );
 
-    final rng = Random();
+    final rng = widget.random ?? Random();
     availableIndices.shuffle(rng);
     for (int i = 0; i < targetMines; i++) {
       final idx = availableIndices[i];
       region.mines[idx] = 1;
     }
     region.mineCount = targetMines;
+
+    if (region.biome == BiomeType.unknown) {
+      final safeNumberedCandidates = <int>[];
+      for (int i = 0; i < totalCells; i++) {
+        if (region.mines[i] == 1) continue;
+        final lr = i ~/ region.cols;
+        final lc = i % region.cols;
+        int localAdjMines = 0;
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            if (dr == 0 && dc == 0) continue;
+            final nlr = lr + dr;
+            final nlc = lc + dc;
+            if (nlr >= 0 && nlr < region.rows && nlc >= 0 && nlc < region.cols) {
+              if (region.mines[nlr * region.cols + nlc] == 1) {
+                localAdjMines++;
+              }
+            }
+          }
+        }
+        if (localAdjMines > 0) {
+          safeNumberedCandidates.add(i);
+        }
+      }
+
+      final candidates = safeNumberedCandidates.isNotEmpty
+          ? safeNumberedCandidates
+          : [for (int i = 0; i < totalCells; i++) if (region.mines[i] == 0) i];
+
+      candidates.shuffle(rng);
+      final countToHide = min(
+        MinesweeperConfig.unknownBiomeHiddenCellCount,
+        candidates.length,
+      );
+      for (int i = 0; i < countToHide; i++) {
+        region.hiddenNumberIndices.add(candidates[i]);
+      }
+    }
   }
 
   int _getAdjacentMines(int regionR, int regionC, int localR, int localC) {
@@ -647,16 +823,13 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
 
     int count = 0;
-    for (int dr = -1; dr <= 1; dr++) {
-      for (int dc = -1; dc <= 1; dc++) {
-        if (dr == 0 && dc == 0) continue;
-        final (nrR, nrC, nlR, nlC) =
-            _resolveCell(regionR, regionC, localR + dr, localC + dc);
-        _ensureRegionGenerated(nrR, nrC);
-        final neighborRegion = _getOrInitRegion(nrR, nrC);
-        if (neighborRegion.mines[neighborRegion.localIndex(nlR, nlC)] == 1) {
-          count++;
-        }
+    for (final (dr, dc) in _getNeighborOffsetsForBiome(region.biome)) {
+      final (nrR, nrC, nlR, nlC) =
+          _resolveCell(regionR, regionC, localR + dr, localC + dc);
+      _ensureRegionGenerated(nrR, nrC);
+      final neighborRegion = _getOrInitRegion(nrR, nrC);
+      if (neighborRegion.mines[neighborRegion.localIndex(nlR, nlC)] == 1) {
+        count++;
       }
     }
     region.adjacent[idx] = count;
@@ -674,6 +847,10 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   /// 6. At least one cell directly adjacent (sharing an orthogonal edge) to it in the world is revealed.
   /// 7. At least one diagonal neighbor has its touching corner tile revealed.
   bool _isRegionAccessible(int r, int c) {
+    if (!widget.isInfiniteWorld) {
+      if (widget.regionsY > 0 && (r < 0 || r >= widget.regionsY)) return false;
+      if (widget.regionsX > 0 && (c < 0 || c >= widget.regionsX)) return false;
+    }
     if (!widget.lockInaccessibleRegions) return true;
 
     final initR = widget.initialRegionY;
@@ -789,14 +966,39 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     return region != null && region.revealedCount > 0;
   }
 
+  bool _isRegionCompleted(int r, int c) {
+    final region = _regions[(r, c)];
+    if (region == null || !region.isGenerated) return false;
+    if (region.isCleared) return true;
+
+    if (region.safeCells > 0 && region.revealedCount >= region.safeCells) {
+      region.isCleared = true;
+      return true;
+    }
+
+    final total = region.rows * region.cols;
+    for (int i = 0; i < total; i++) {
+      if (region.mines[i] == 1) {
+        if (region.cellStates[i] != CellState.flagged) return false;
+      } else {
+        if (region.cellStates[i] != CellState.revealed &&
+            region.cellStates[i] != CellState.hiddenNumber) {
+          return false;
+        }
+      }
+    }
+    region.isCleared = true;
+    return true;
+  }
+
   // ── Mine placement with safe clearing on first click ───────────────────────
 
-  void _placeInitialMines(int startLocalR, int startLocalC) {
+  void _placeInitialMines(int regionR, int regionC, int startLocalR, int startLocalC) {
     for (int dr = -1; dr <= 1; dr++) {
       for (int dc = -1; dc <= 1; dc++) {
         final (targetR, targetC, targetLr, targetLc) = _resolveCell(
-          _currentRegionRow,
-          _currentRegionCol,
+          regionR,
+          regionC,
           startLocalR + dr,
           startLocalC + dc,
         );
@@ -807,13 +1009,116 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
     }
 
-    final currentRegion = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
-    _generateRegionMines(currentRegion);
+    final targetRegion = _getOrInitRegion(regionR, regionC);
+    _generateRegionMines(targetRegion);
     _actualMineCount = widget.isInfiniteWorld
-        ? currentRegion.mineCount
+        ? targetRegion.mineCount
         : (widget.regionsX * widget.regionsY * widget.minesPerRegion);
     _minesPlaced = true;
-    _onRegionUnlocked(_currentRegionRow, _currentRegionCol);
+    _onRegionUnlocked(regionR, regionC);
+  }
+
+  // ── Inventory & Item Actions ───────────────────────────────────────────────
+
+  void _breakItem(InventoryItemType type) {
+    final idx = _inventory.indexOf(type);
+    if (idx != -1) {
+      _inventory[idx] = null;
+    }
+  }
+
+  void _useInventorySlot(int slotIndex) {
+    if (_gameOver || _gameWon) return;
+    if (slotIndex < 0 || slotIndex >= _inventory.length) return;
+    final item = _inventory[slotIndex];
+    if (item == null) return;
+
+    if (item == InventoryItemType.flagObvious) {
+      if (!_minesPlaced) return;
+      _flagAllObviousMines();
+      setState(() {
+        _inventory[slotIndex] = null;
+      });
+    }
+  }
+
+  int _flagAllObviousMines() {
+    int totalFlagged = 0;
+    bool progress = true;
+
+    while (progress) {
+      progress = false;
+      final obviousMinesToFlag = <(int, int, int, int)>{};
+
+      for (final region in _regions.values.toList()) {
+        if (region.revealedCount == 0 &&
+            !region.cellStates.contains(CellState.revealed)) {
+          continue;
+        }
+
+        for (int lr = 0; lr < region.rows; lr++) {
+          for (int lc = 0; lc < region.cols; lc++) {
+            final idx = region.localIndex(lr, lc);
+            final state = region.cellStates[idx];
+            if (state != CellState.revealed) continue;
+
+            final adjMines = _getAdjacentMines(region.r, region.c, lr, lc);
+            if (adjMines == 0) continue;
+
+            int flaggedCount = 0;
+            final unrevealed = <(int, int, int, int)>[];
+
+            for (final (dr, dc) in _getNeighborOffsetsForBiome(region.biome)) {
+              final (nrR, nrC, nlR, nlC) =
+                  _resolveCell(region.r, region.c, lr + dr, lc + dc);
+              final neighborRegion = _getOrInitRegion(nrR, nrC);
+              final nIdx = neighborRegion.localIndex(nlR, nlC);
+              final nState = neighborRegion.cellStates[nIdx];
+
+              if (nState == CellState.flagged) {
+                flaggedCount++;
+              } else if (nState == CellState.unrevealed) {
+                unrevealed.add((nrR, nrC, nlR, nlC));
+              }
+            }
+
+            final remainingNeeded = adjMines - flaggedCount;
+            if (remainingNeeded > 0 && remainingNeeded == unrevealed.length) {
+              for (final cell in unrevealed) {
+                obviousMinesToFlag.add(cell);
+              }
+            }
+          }
+        }
+      }
+
+      if (obviousMinesToFlag.isNotEmpty) {
+        for (final (rR, rC, lR, lC) in obviousMinesToFlag) {
+          final r = _getOrInitRegion(rR, rC);
+          final idx = r.localIndex(lR, lC);
+          if (r.cellStates[idx] == CellState.unrevealed) {
+            r.cellStates[idx] = CellState.flagged;
+            r.flagCount++;
+            _flagCount++;
+            _totalFlagsPlacedInSession++;
+            if (r.mines[idx] == 1) {
+              _correctlyFlaggedMines++;
+            } else {
+              _hasMisplacedFlag = true;
+            }
+            totalFlagged++;
+            progress = true;
+          }
+        }
+      }
+    }
+
+    if (totalFlagged > 0) {
+      _checkWin();
+      _checkNewlyUnlockedRegions();
+    }
+
+    return totalFlagged;
   }
 
   // ── Game actions ───────────────────────────────────────────────────────────
@@ -848,7 +1153,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     );
   }
 
-  void _reveal(int localRow, int localCol) {
+  void _reveal(int regionR, int regionC, int localRow, int localCol) {
     if (_gameOver || _gameWon) return;
 
     if (localRow < 0 ||
@@ -858,7 +1163,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    final region = _getOrInitRegion(regionR, regionC);
     final idx = region.localIndex(localRow, localCol);
 
     final state = region.cellStates[idx];
@@ -870,19 +1175,34 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     // First click: place mines ensuring this cell & surrounding area are safe
     if (!_minesPlaced) {
-      _placeInitialMines(localRow, localCol);
+      _placeInitialMines(regionR, regionC, localRow, localCol);
     }
 
     if (region.mines[idx] == 1) {
+      if (hasShield) {
+        _breakItem(InventoryItemType.shield);
+        setState(() {
+          region.cellStates[idx] = CellState.flagged;
+          region.flagCount++;
+          _flagCount++;
+          _totalFlagsPlacedInSession++;
+          _correctlyFlaggedMines++;
+          _checkWin();
+        });
+        return;
+      }
+
       region.cellStates[idx] = CellState.activatedMine;
-      _addShockwave(localRow, localCol);
+      if (regionR == _currentRegionRow && regionC == _currentRegionCol) {
+        _addShockwave(localRow, localCol);
+      }
+      _idlePulseController.stop();
+      _entryPulseController.stop();
       setState(() {
         _gameOver = true;
         _revealAllMines();
       });
-      Future.delayed(BaseGameConfig.failTransitionDelay, () {
-        if (mounted) widget.onFail();
-      });
+      if (mounted) widget.onFail();
       return;
     }
 
@@ -928,7 +1248,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
 
     final queue = <int>[startIdx];
-    region.cellStates[startIdx] = CellState.revealed;
+    final isStartHidden = region.hiddenNumberIndices.contains(startIdx);
+    region.cellStates[startIdx] =
+        isStartHidden ? CellState.hiddenNumber : CellState.revealed;
     region.revealedCount++;
     _revealedCount++;
     newlyRevealed?.add(startIdx);
@@ -939,21 +1261,23 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       final lr = idx ~/ region.cols;
       final lc = idx % region.cols;
 
-      if (_getAdjacentMines(region.r, region.c, lr, lc) == 0) {
-        for (int dr = -1; dr <= 1; dr++) {
-          for (int dc = -1; dc <= 1; dc++) {
-            if (dr == 0 && dc == 0) continue;
-            final nlr = lr + dr;
-            final nlc = lc + dc;
-            // Stop strictly at region borders!
-            if (nlr >= 0 && nlr < region.rows && nlc >= 0 && nlc < region.cols) {
-              final nIdx = region.localIndex(nlr, nlc);
-              if (region.cellStates[nIdx] == CellState.unrevealed &&
-                  region.mines[nIdx] == 0) {
-                region.cellStates[nIdx] = CellState.revealed;
-                region.revealedCount++;
-                _revealedCount++;
-                newlyRevealed?.add(nIdx);
+      if (_getAdjacentMines(region.r, region.c, lr, lc) == 0 &&
+          !region.hiddenNumberIndices.contains(idx)) {
+        for (final (dr, dc) in _getNeighborOffsetsForBiome(region.biome)) {
+          final nlr = lr + dr;
+          final nlc = lc + dc;
+          // Stop strictly at region borders!
+          if (nlr >= 0 && nlr < region.rows && nlc >= 0 && nlc < region.cols) {
+            final nIdx = region.localIndex(nlr, nlc);
+            if (region.cellStates[nIdx] == CellState.unrevealed &&
+                region.mines[nIdx] == 0) {
+              final isHidden = region.hiddenNumberIndices.contains(nIdx);
+              region.cellStates[nIdx] =
+                  isHidden ? CellState.hiddenNumber : CellState.revealed;
+              region.revealedCount++;
+              _revealedCount++;
+              newlyRevealed?.add(nIdx);
+              if (!isHidden) {
                 queue.add(nIdx);
               }
             }
@@ -963,7 +1287,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
   }
 
-  void _toggleFlag(int localRow, int localCol) {
+  void _toggleFlag(int regionR, int regionC, int localRow, int localCol) {
     if (_gameOver || _gameWon) return;
 
     if (localRow < 0 ||
@@ -973,7 +1297,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    final region = _getOrInitRegion(regionR, regionC);
     final idx = region.localIndex(localRow, localCol);
     final state = region.cellStates[idx];
     if (state == CellState.revealed || state == CellState.hiddenNumber) return;
@@ -1001,46 +1325,46 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     });
   }
 
-  void _chord(int localRow, int localCol) {
+  /// Chords a cell by revealing adjacent unflagged cells if flag count matches adjacent mine count.
+  /// Unlike standard exploration, chording IS allowed to affect cells across region borders.
+  void _chord(int regionR, int regionC, int localRow, int localCol) {
     if (_gameOver || _gameWon) return;
 
-    if (localRow < 0 ||
-        localRow >= widget.regionRows ||
-        localCol < 0 ||
-        localCol >= widget.regionCols) {
-      return;
-    }
-
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    final region = _getOrInitRegion(regionR, regionC);
     final idx = region.localIndex(localRow, localCol);
 
     if (region.cellStates[idx] != CellState.revealed ||
-        _getAdjacentMines(region.r, region.c, localRow, localCol) <= 0) {
+        region.hiddenNumberIndices.contains(idx)) {
       return;
     }
 
-    final adjCount = _getAdjacentMines(region.r, region.c, localRow, localCol);
+    final adjCount = _getAdjacentMines(regionR, regionC, localRow, localCol);
+    if (adjCount == 0) return;
+
     int flaggedCount = 0;
     final unflaggedNeighbors = <(int, int, int, int)>[];
 
-    for (int dr = -1; dr <= 1; dr++) {
-      for (int dc = -1; dc <= 1; dc++) {
-        if (dr == 0 && dc == 0) continue;
-        final (nrR, nrC, nlR, nlC) = _resolveCell(
-          _currentRegionRow,
-          _currentRegionCol,
-          localRow + dr,
-          localCol + dc,
-        );
-        _ensureRegionGenerated(nrR, nrC);
-        final nRegion = _getOrInitRegion(nrR, nrC);
-        final nState = nRegion.cellStates[nRegion.localIndex(nlR, nlC)];
+    for (final (dr, dc) in _getNeighborOffsetsForBiome(region.biome)) {
+      final (targetRegionRow, targetRegionCol, targetLocalRow, targetLocalCol) =
+          _resolveCell(regionR, regionC, localRow + dr, localCol + dc);
 
-        if (nState == CellState.flagged) {
-          flaggedCount++;
-        } else if (nState == CellState.unrevealed) {
-          unflaggedNeighbors.add((nrR, nrC, nlR, nlC));
-        }
+      if (!_isRegionAccessible(targetRegionRow, targetRegionCol)) {
+        continue;
+      }
+
+      final targetRegion = _getOrInitRegion(targetRegionRow, targetRegionCol);
+      final nIdx = targetRegion.localIndex(targetLocalRow, targetLocalCol);
+      final nState = targetRegion.cellStates[nIdx];
+
+      if (nState == CellState.flagged) {
+        flaggedCount++;
+      } else if (nState == CellState.unrevealed) {
+        unflaggedNeighbors.add((
+          targetRegionRow,
+          targetRegionCol,
+          targetLocalRow,
+          targetLocalCol,
+        ));
       }
     }
 
@@ -1048,106 +1372,155 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    bool hitMine = false;
-    int minesRevealedByChord = 0;
+    final hitMines = <(int, int, int, int)>[];
+    final safeNeighbors = <(int, int, int, int)>[];
 
-    setState(() {
-      final newlyRevealed = <int>[];
-      final newlyUnlockedCoords = <(int, int)>{};
+    for (final (tRegR, tRegC, tLocR, tLocC) in unflaggedNeighbors) {
+      final targetRegion = _getOrInitRegion(tRegR, tRegC);
+      final nIdx = targetRegion.localIndex(tLocR, tLocC);
 
-      for (final (nrR, nrC, nlR, nlC) in unflaggedNeighbors) {
-        final targetRegion = _getOrInitRegion(nrR, nrC);
-        final nIdx = targetRegion.localIndex(nlR, nlC);
-        if (targetRegion.cellStates[nIdx] != CellState.unrevealed) {
-          continue;
+      if (targetRegion.cellStates[nIdx] != CellState.unrevealed) {
+        continue;
+      }
+
+      if (targetRegion.mines[nIdx] == 1) {
+        hitMines.add((tRegR, tRegC, tLocR, tLocC));
+      } else {
+        safeNeighbors.add((tRegR, tRegC, tLocR, tLocC));
+      }
+    }
+
+    if (hitMines.isEmpty) {
+      setState(() {
+        for (final (tRegR, tRegC, tLocR, tLocC) in safeNeighbors) {
+          final targetRegion = _getOrInitRegion(tRegR, tRegC);
+          final newlyRevealed = <int>[];
+          _floodReveal(targetRegion, tLocR, tLocC, newlyRevealed);
+
+          if (widget.gameState.isCurrentGameAnomaly &&
+              !_gameOver &&
+              !_gameWon) {
+            bool revealedZero = newlyRevealed.any((i) =>
+                _getAdjacentMines(
+                  targetRegion.r,
+                  targetRegion.c,
+                  i ~/ targetRegion.cols,
+                  i % targetRegion.cols,
+                ) == 0);
+            if (revealedZero) {
+              final candidates = newlyRevealed
+                  .where((i) {
+                    final r = i ~/ targetRegion.cols;
+                    final c = i % targetRegion.cols;
+                    return _getAdjacentMines(
+                              targetRegion.r,
+                              targetRegion.c,
+                              r,
+                              c,
+                            ) > 0 &&
+                        r > 0 &&
+                        r < targetRegion.rows - 1 &&
+                        c > 0 &&
+                        c < targetRegion.cols - 1;
+                  })
+                  .toList();
+              if (candidates.isNotEmpty) {
+                final chosen =
+                    candidates[Random().nextInt(candidates.length)];
+                targetRegion.cellStates[chosen] = CellState.hiddenNumber;
+              }
+            }
+          }
         }
 
-        if (targetRegion.mines[nIdx] == 1) {
-          hitMine = true;
-          minesRevealedByChord++;
+        _checkWin();
+        _checkNewlyUnlockedRegions();
+      });
+    } else if (hitMines.length == 1 && hasShield) {
+      _breakItem(InventoryItemType.shield);
+      setState(() {
+        final (mRegR, mRegC, mLocR, mLocC) = hitMines.first;
+        final mRegion = _getOrInitRegion(mRegR, mRegC);
+        final mIdx = mRegion.localIndex(mLocR, mLocC);
+        mRegion.cellStates[mIdx] = CellState.flagged;
+        mRegion.flagCount++;
+        _flagCount++;
+        _totalFlagsPlacedInSession++;
+        _correctlyFlaggedMines++;
+
+        for (final (tRegR, tRegC, tLocR, tLocC) in safeNeighbors) {
+          final targetRegion = _getOrInitRegion(tRegR, tRegC);
+          final newlyRevealed = <int>[];
+          _floodReveal(targetRegion, tLocR, tLocC, newlyRevealed);
+
+          if (widget.gameState.isCurrentGameAnomaly &&
+              !_gameOver &&
+              !_gameWon) {
+            bool revealedZero = newlyRevealed.any((i) =>
+                _getAdjacentMines(
+                  targetRegion.r,
+                  targetRegion.c,
+                  i ~/ targetRegion.cols,
+                  i % targetRegion.cols,
+                ) == 0);
+            if (revealedZero) {
+              final candidates = newlyRevealed
+                  .where((i) {
+                    final r = i ~/ targetRegion.cols;
+                    final c = i % targetRegion.cols;
+                    return _getAdjacentMines(
+                              targetRegion.r,
+                              targetRegion.c,
+                              r,
+                              c,
+                            ) > 0 &&
+                        r > 0 &&
+                        r < targetRegion.rows - 1 &&
+                        c > 0 &&
+                        c < targetRegion.cols - 1;
+                  })
+                  .toList();
+              if (candidates.isNotEmpty) {
+                final chosen =
+                    candidates[Random().nextInt(candidates.length)];
+                targetRegion.cellStates[chosen] = CellState.hiddenNumber;
+              }
+            }
+          }
+        }
+
+        _checkWin();
+        _checkNewlyUnlockedRegions();
+      });
+    } else {
+      setState(() {
+        for (final (tRegR, tRegC, tLocR, tLocC) in hitMines) {
+          final targetRegion = _getOrInitRegion(tRegR, tRegC);
+          final nIdx = targetRegion.localIndex(tLocR, tLocC);
           targetRegion.cellStates[nIdx] = CellState.activatedMine;
-          if (nrR == _currentRegionRow && nrC == _currentRegionCol) {
-            _addShockwave(nlR, nlC);
-          }
-        } else {
-          final targetNewlyRevealed = <int>[];
-          _floodReveal(targetRegion, nlR, nlC, targetNewlyRevealed);
-          if (nrR == _currentRegionRow && nrC == _currentRegionCol) {
-            newlyRevealed.addAll(targetNewlyRevealed);
-          }
-          if (nrR != _currentRegionRow || nrC != _currentRegionCol) {
-            newlyUnlockedCoords.add((nrR, nrC));
+          if (tRegR == _currentRegionRow && tRegC == _currentRegionCol) {
+            _addShockwave(tLocR, tLocC);
           }
         }
-      }
-
-      for (final coord in newlyUnlockedCoords) {
-        if (!_unlockedRegions.contains(coord)) {
-          _unlockedRegions.add(coord);
-          _startUnlockFadeAnimation(coord);
-          _onRegionUnlocked(coord.$1, coord.$2);
-        }
-      }
-
-      if (widget.gameState.isCurrentGameAnomaly &&
-          !hitMine &&
-          !_gameOver &&
-          !_gameWon) {
-        bool revealedZero = newlyRevealed.any((i) =>
-            _getAdjacentMines(region.r, region.c, i ~/ region.cols, i % region.cols) == 0);
-        if (revealedZero) {
-          final candidates = newlyRevealed
-              .where((i) {
-                final r = i ~/ region.cols;
-                final c = i % region.cols;
-                return _getAdjacentMines(region.r, region.c, r, c) > 0 &&
-                    r > 0 &&
-                    r < region.rows - 1 &&
-                    c > 0 &&
-                    c < region.cols - 1;
-              })
-              .toList();
-          if (candidates.isNotEmpty) {
-            final chosen = candidates[Random().nextInt(candidates.length)];
-            region.cellStates[chosen] = CellState.hiddenNumber;
-          }
-        }
-      }
-
-      if (minesRevealedByChord >=
-              AchievementTargets.minesweeperChordMinesTarget &&
-          widget.gameState.canTriggerAchievements) {
-        if (widget.gameState.getAchievementStatus(
-              'minesweeper_chord_multi_mine',
-            ) ==
-            AchievementStatus.locked) {
-          widget.gameState.setAchievementStatus(
-            'minesweeper_chord_multi_mine',
-            AchievementStatus.unlocked,
-          );
-        }
-      }
-
-      if (hitMine) {
+        _idlePulseController.stop();
+        _entryPulseController.stop();
         _gameOver = true;
         _revealAllMines();
-        Future.delayed(BaseGameConfig.failTransitionDelay, () {
-          if (mounted) widget.onFail();
-        });
-      } else {
-        _checkWin();
-      }
-
-      _checkNewlyUnlockedRegions();
-    });
+        if (mounted) widget.onFail();
+      });
+    }
   }
 
   void _revealAllMines() {
     for (final region in _regions.values) {
-      if (!region.isGenerated) continue;
-      for (int i = 0; i < region.rows * region.cols; i++) {
-        if (region.mines[i] == 1 && region.cellStates[i] != CellState.activatedMine) {
-          region.cellStates[i] = CellState.revealedMine;
+      if (region.isCleared || _isRegionCompleted(region.r, region.c)) continue;
+      final size = region.rows * region.cols;
+      for (int i = 0; i < size; i++) {
+        if (region.mines[i] == 1) {
+          if (region.cellStates[i] != CellState.activatedMine &&
+              region.cellStates[i] != CellState.flagged) {
+            region.cellStates[i] = CellState.revealedMine;
+          }
         }
       }
     }
@@ -1180,14 +1553,16 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
       if (allSafeRevealed && allMinesFlagged) {
         _gameWon = true;
+        _idlePulseController.stop();
+        _entryPulseController.stop();
         if (!_hasMisplacedFlag) {
           widget.gameState.recordFlawlessMinesweeperWin();
         }
         Future.delayed(BaseGameConfig.winTransitionDelay, () {
           if (mounted) widget.onComplete();
         });
+        return;
       }
-      return;
     }
 
     final currentRegion = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
@@ -1203,9 +1578,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       final allMinesFlagged = correctlyFlagged == currentRegion.mineCount &&
           currentRegion.flagCount == currentRegion.mineCount;
 
-      if (allSafeRevealed && allMinesFlagged) {
+      if (allSafeRevealed) {
         currentRegion.isCleared = true;
-        if (!_hasMisplacedFlag) {
+        if (!_hasMisplacedFlag && allMinesFlagged) {
           widget.gameState.recordFlawlessMinesweeperWin();
         }
       }
@@ -1285,10 +1660,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
   /// Determines the (dRow, dCol) transition direction by dividing the 2D plane
   /// into 8 equal spherical (angular) slices of 45 degrees each.
-  /// The direction indicates which neighbor region is pulled into center view.
   (int, int) _get8SliceDirection(Offset delta) {
     if (delta.distance < 4.0) return (0, 0);
-    // Incoming region is in the opposite direction of the finger pull (-dx, -dy)
     final angle = atan2(-delta.dy, -delta.dx);
     var deg = angle * 180.0 / pi;
     if (deg < 0) deg += 360.0;
@@ -1300,14 +1673,15 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _transitionGeneration++;
     if (!_isTransitioning &&
         !_slideController.isAnimating &&
-        _planeOffset == Offset.zero &&
-        _transitionProgress == 0.0) {
+        _planeOffset == Offset.zero) {
       return;
     }
     _slideController.stop();
-    _centerDimController.stop();
-    _centerDimController.value = 0.0;
-    _resetCandidateFade();
+    final bool didChangeRegion = _isTransitioning &&
+        _targetTransitionRow != null &&
+        _targetTransitionCol != null &&
+        (_targetTransitionRow != _currentRegionRow ||
+            _targetTransitionCol != _currentRegionCol);
     if (_isTransitioning &&
         _targetTransitionRow != null &&
         _targetTransitionCol != null) {
@@ -1323,18 +1697,18 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _targetTransitionRow = null;
     _targetTransitionCol = null;
     _planeOffset = Offset.zero;
-    _transitionProgress = 0.0;
-    _gradientProgress = 0.0;
     _offsetAnimation = null;
-    _progressAnimation = null;
-    _gradientAnimation = null;
     _isThresholdFlipped = false;
     _swipeDRow = 0;
     _swipeDCol = 0;
     _isTransitioning = false;
+    if (didChangeRegion && !_entryPulseController.isAnimating) {
+      _startBorderPulseSequence();
+    }
   }
 
   void _onPointerDown(PointerDownEvent event) {
+    if (_isMinimapExpanded) return;
     _touchStartedWhileAnimating = _isAnimating;
     if (_isTransitioning || _slideController.isAnimating) {
       setState(() {
@@ -1346,9 +1720,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragExceededTapSlop = false;
     _isThresholdFlipped = false;
     _slideController.stop();
-    _centerDimController.stop();
-    _centerDimController.value = 0.0;
-    _resetCandidateFade();
   }
 
   void _onPointerMove(PointerMoveEvent event) {
@@ -1356,7 +1727,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     final delta = event.position - _dragStartPos!;
     _rawDragDelta = delta;
 
-    if (delta.distance > 8.0) {
+    if (delta.distance > 12.0) {
       _dragExceededTapSlop = true;
     }
 
@@ -1370,12 +1741,20 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
-        _centerDimController.reverse();
-        _updateCandidateFade(activeDirection: null);
       }
       _swipeDRow = 0;
       _swipeDCol = 0;
       return;
+    }
+
+    if (_entryPulseController.isAnimating ||
+        _entryPulseController.value > 0.0 ||
+        _idlePulseController.isAnimating ||
+        _idlePulseController.value > 0.0) {
+      _entryPulseController.stop();
+      _entryPulseController.value = 0.0;
+      _idlePulseController.stop();
+      _idlePulseController.value = 0.0;
     }
 
     final effectiveDistance = distance - widget.dragMinThreshold;
@@ -1394,18 +1773,14 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         canTransition && distance >= widget.swipeThreshold;
 
     if (isOverThreshold) {
-      _centerDimController.forward();
       if (!_isThresholdFlipped || _swipeDRow != dRow || _swipeDCol != dCol) {
         _isThresholdFlipped = true;
         _swipeDRow = dRow;
         _swipeDCol = dCol;
-        _updateCandidateFade(activeDirection: (dRow, dCol));
       }
     } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
-        _centerDimController.reverse();
-        _updateCandidateFade(activeDirection: null);
       }
       if (canTransition) {
         _swipeDRow = dRow;
@@ -1413,13 +1788,11 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       } else {
         _swipeDRow = 0;
         _swipeDCol = 0;
-        _centerDimController.reverse();
-        _updateCandidateFade(activeDirection: null);
       }
     }
 
     setState(() {
-      _planeOffset = visualOffset;
+      _planeOffset = _currentScale > 0 ? (visualOffset / _currentScale) : visualOffset;
     });
   }
 
@@ -1445,8 +1818,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     } else {
       if (_isThresholdFlipped) {
         _isThresholdFlipped = false;
-        _centerDimController.reverse();
-        _updateCandidateFade(activeDirection: null);
       }
       _animateSnapBack();
     }
@@ -1457,8 +1828,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _dragStartPos = null;
     if (_isThresholdFlipped) {
       _isThresholdFlipped = false;
-      _centerDimController.reverse();
-      _updateCandidateFade(activeDirection: null);
     }
     _animateSnapBack();
   }
@@ -1466,8 +1835,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void _animateSnapBack() {
     _slideController.stop();
     _isThresholdFlipped = false;
-    _centerDimController.reverse();
-    _updateCandidateFade(activeDirection: null);
     setState(() {
       _targetTransitionRow = null;
       _targetTransitionCol = null;
@@ -1476,17 +1843,11 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     });
     if (_planeOffset == Offset.zero) {
       setState(() {
-        _gradientAnimation = null;
         _offsetAnimation = null;
-        _progressAnimation = null;
         _swipeDRow = 0;
         _swipeDCol = 0;
-        _transitionProgress = 0.0;
-        _gradientProgress = 0.0;
-        _centerDimController.stop();
-        _centerDimController.value = 0.0;
-        _resetCandidateFade();
       });
+      _resumeIdlePulse();
       return;
     }
     final gen = ++_transitionGeneration;
@@ -1499,41 +1860,17 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         curve: Curves.easeOut,
       ),
     );
-    _progressAnimation = Tween<double>(
-      begin: _transitionProgress,
-      end: 0.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _slideController,
-        curve: Curves.easeOut,
-      ),
-    );
-    _gradientAnimation = Tween<double>(
-      begin: _gradientProgress,
-      end: 0.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _slideController,
-        curve: Curves.easeOut,
-      ),
-    );
     _slideController.duration = const Duration(milliseconds: 180);
     _slideController.forward(from: 0.0).then((_) {
       if (!mounted || _transitionGeneration != gen) return;
       setState(() {
         _planeOffset = Offset.zero;
-        _transitionProgress = 0.0;
-        _gradientProgress = 0.0;
         _offsetAnimation = null;
-        _progressAnimation = null;
-        _gradientAnimation = null;
         _isThresholdFlipped = false;
         _swipeDRow = 0;
         _swipeDCol = 0;
-        _centerDimController.stop();
-        _centerDimController.value = 0.0;
-        _resetCandidateFade();
       });
+      _resumeIdlePulse();
     }).catchError((_) {});
   }
 
@@ -1550,20 +1887,6 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     _targetTransitionRow = targetRow;
     _targetTransitionCol = targetCol;
     _slideController.stop();
-    _centerDimController.stop();
-    _centerDimController.value = 1.0;
-
-    final targetCtrl = _getCandidateFadeController((dRow, dCol));
-    targetCtrl.stop();
-    targetCtrl.value = 1.0;
-    for (final entry in _candidateFadeControllers.entries) {
-      if (entry.key != (dRow, dCol)) {
-        entry.value.stop();
-        entry.value.value = 0.0;
-      }
-    }
-    _transitionProgress = 1.0;
-    _gradientProgress = 1.0;
 
     const double totalTileSize =
         MinesweeperConfig.cellSize + MinesweeperConfig.cellGap;
@@ -1587,24 +1910,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         curve: Curves.easeOutCubic,
       ),
     );
-    _progressAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _slideController,
-        curve: Curves.easeOutCubic,
-      ),
-    );
-    _gradientAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _slideController,
-        curve: Curves.easeOutCubic,
-      ),
-    );
+
+    _startBorderPulseSequence();
 
     final gen = ++_transitionGeneration;
     _slideController.duration = const Duration(milliseconds: 220);
@@ -1622,19 +1929,13 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _targetTransitionRow = null;
         _targetTransitionCol = null;
         _planeOffset = Offset.zero;
-        _transitionProgress = 0.0;
-        _gradientProgress = 0.0;
-        _gradientAnimation = null;
         _offsetAnimation = null;
-        _progressAnimation = null;
         _isThresholdFlipped = false;
         _swipeDRow = 0;
         _swipeDCol = 0;
         _isTransitioning = false;
-        _centerDimController.stop();
-        _centerDimController.value = 0.0;
-        _resetCandidateFade();
       });
+      _resumeIdlePulse();
     }).catchError((_) {});
   }
 
@@ -1651,9 +1952,45 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     }
   }
 
+  void _selectAndCollapseMinimap() {
+    final targetRow = _extendedSelectedRegion?.$1 ?? _currentRegionRow;
+    final targetCol = _extendedSelectedRegion?.$2 ?? _currentRegionCol;
+
+    setState(() {
+      _isMinimapExpanded = false;
+      _extendedSelectedRegion = null;
+
+      if (targetRow != _currentRegionRow || targetCol != _currentRegionCol) {
+        if (_isRegionAccessible(targetRow, targetCol)) {
+          _currentRegionRow = targetRow;
+          _currentRegionCol = targetCol;
+          if (!_unlockedRegions.contains((targetRow, targetCol))) {
+            _unlockedRegions.add((targetRow, targetCol));
+          }
+          _getOrInitRegion(targetRow, targetCol);
+          if (_minesPlaced) {
+            _onRegionUnlocked(targetRow, targetCol);
+          }
+          _slideController.stop();
+          _planeOffset = Offset.zero;
+          _targetTransitionRow = null;
+          _targetTransitionCol = null;
+          _offsetAnimation = null;
+          _isThresholdFlipped = false;
+          _swipeDRow = 0;
+          _swipeDCol = 0;
+          _isTransitioning = false;
+          _startBorderPulseSequence();
+        }
+      } else {
+        _resumeIdlePulse();
+      }
+    });
+  }
+
   // ── Cell Interaction Handlers ──────────────────────────────────────────────
 
-  void _handleCellTap(int localRow, int localCol) {
+  void _handleCellTap(int targetRegionRow, int targetRegionCol, int localRow, int localCol) {
     if (_touchStartedWhileAnimating ||
         _dragExceededTapSlop ||
         _gameOver ||
@@ -1669,19 +2006,23 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    if (!_isRegionAccessible(targetRegionRow, targetRegionCol)) {
+      return;
+    }
+
+    final region = _getOrInitRegion(targetRegionRow, targetRegionCol);
     final idx = region.localIndex(localRow, localCol);
     final state = region.cellStates[idx];
 
     if (state == CellState.unrevealed) {
-      _reveal(localRow, localCol);
+      _reveal(targetRegionRow, targetRegionCol, localRow, localCol);
     } else if (state == CellState.revealed &&
-        _getAdjacentMines(_currentRegionRow, _currentRegionCol, localRow, localCol) > 0) {
-      _chord(localRow, localCol);
+        _getAdjacentMines(targetRegionRow, targetRegionCol, localRow, localCol) > 0) {
+      _chord(targetRegionRow, targetRegionCol, localRow, localCol);
     }
   }
 
-  void _handleCellLongPress(int localRow, int localCol) {
+  void _handleCellLongPress(int targetRegionRow, int targetRegionCol, int localRow, int localCol) {
     if (_touchStartedWhileAnimating ||
         _dragExceededTapSlop ||
         _gameOver ||
@@ -1697,13 +2038,17 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    if (!_isRegionAccessible(targetRegionRow, targetRegionCol)) {
+      return;
+    }
+
+    final region = _getOrInitRegion(targetRegionRow, targetRegionCol);
     final idx = region.localIndex(localRow, localCol);
     final state = region.cellStates[idx];
 
     if (state == CellState.unrevealed || state == CellState.flagged) {
       HapticFeedback.mediumImpact();
-      _toggleFlag(localRow, localCol);
+      _toggleFlag(targetRegionRow, targetRegionCol, localRow, localCol);
     }
   }
 
@@ -1713,8 +2058,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     int r,
     int c,
     double totalTileSize,
-    double cellGap,
-  ) {
+    double cellGap, {
+    Color? biomeColor,
+  }) {
     final regionRow = _currentRegionRow + dr;
     final regionCol = _currentRegionCol + dc;
     final region = _getOrInitRegion(regionRow, regionCol);
@@ -1722,12 +2068,15 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final isCurrentPanel = (dr == 0 && dc == 0);
     final isNeighbor = !isCurrentPanel;
-    final isInteractable = isCurrentPanel && !_isAnimating;
+    final isAccessible = _isRegionAccessible(regionRow, regionCol);
+    final isInteractable =
+        isAccessible && !_isAnimating && !_gameOver && !_gameWon;
 
     int adjacentMines = 0;
     if (region.cellStates[idx] == CellState.revealed ||
         region.cellStates[idx] == CellState.hiddenNumber) {
-      adjacentMines = _getAdjacentMines(regionRow, regionCol, r, c);
+      _getAdjacentMines(regionRow, regionCol, r, c);
+      adjacentMines = region.getDisplayedNumber(idx);
     }
 
     return SizedBox(
@@ -1744,8 +2093,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         isInteractable: isInteractable,
         backgroundOpacity: 1.0,
         contentOpacity: 1.0,
-        onTap: isInteractable ? () => _handleCellTap(r, c) : null,
-        onLongPress: isInteractable ? () => _handleCellLongPress(r, c) : null,
+        biomeColor: biomeColor,
+        onTap: isInteractable ? () => _handleCellTap(regionRow, regionCol, r, c) : null,
+        onLongPress: isInteractable ? () => _handleCellLongPress(regionRow, regionCol, r, c) : null,
         longTapDuration: widget.longTapDuration,
         touchHighlightColor: widget.touchHighlightColor,
         touchHighlightFadeDuration: widget.touchHighlightFadeDuration,
@@ -1761,9 +2111,15 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     double paddingAmount,
     double borderWidth,
     double panelGap,
+    double originX,
+    double originY,
   ) {
     final regionRow = _currentRegionRow + dr;
     final regionCol = _currentRegionCol + dc;
+    final targetRegion = _getOrInitRegion(regionRow, regionCol);
+    final isSpecialBiome =
+        targetRegion.biome != BiomeType.regular && targetRegion.isBiomeRevealed;
+    final biomeColor = MinesweeperConfig.biomeBorderColor(targetRegion.biome);
 
     final activeGridWidth = widget.regionCols * totalTileSize;
     final activeGridHeight = widget.regionRows * totalTileSize;
@@ -1774,38 +2130,210 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
     final strideX = panelWidth + panelGap;
     final strideY = panelHeight + panelGap;
-    final panelInset = paddingAmount + borderWidth;
-    final peekMarginX = widget.peekDepth * totalTileSize + panelInset + panelGap;
-    final peekMarginY = widget.peekDepth * totalTileSize + panelInset + panelGap;
 
-    final panelLeft = peekMarginX + (dc * strideX) + _planeOffset.dx;
-    final panelTop = peekMarginY + (dr * strideY) + _planeOffset.dy;
+    final panelLeft = originX + (dc * strideX) + _planeOffset.dx;
+    final panelTop = originY + (dr * strideY) + _planeOffset.dy;
 
-    final neighborBaseOpacity =
-        (1.0 - widget.neighborRegionTransparency).clamp(0.0, 1.0);
+    final unlockAnimation = _unlockAnimations[(regionRow, regionCol)];
 
-    double panelOpacity;
-    if (_slideController.isAnimating) {
-      final p = _transitionProgress.clamp(0.0, 1.0);
-      if (dr == 0 && dc == 0) {
-        panelOpacity = 1.0 - (p * (1.0 - neighborBaseOpacity));
-      } else if (dr == _swipeDRow && dc == _swipeDCol) {
-        panelOpacity = neighborBaseOpacity + (p * (1.0 - neighborBaseOpacity));
-      } else {
-        panelOpacity = neighborBaseOpacity;
+    final selectedDr =
+        (_isThresholdFlipped || _isTransitioning) ? _swipeDRow : 0;
+    final selectedDc =
+        (_isThresholdFlipped || _isTransitioning) ? _swipeDCol : 0;
+    final isSelected = (dr == selectedDr && dc == selectedDc);
+
+    Color getActiveBorderColor() {
+      if (!isSelected) {
+        if (isSpecialBiome && biomeColor != null) {
+          return biomeColor.withValues(
+            alpha: MinesweeperConfig.nonSelectedBiomeBorderAlpha,
+          );
+        }
+        return MinesweeperConfig.nonSelectedRegularBorderColor;
       }
-    } else if (dr == 0 && dc == 0) {
-      final dimProgress = _centerDimAnimation.value.clamp(0.0, 1.0);
-      panelOpacity = 1.0 - (dimProgress * (1.0 - neighborBaseOpacity));
-    } else {
-      final candidateAnim = _candidateFadeAnimations[(dr, dc)];
-      final candidateProgress = candidateAnim?.value ?? 0.0;
-      panelOpacity =
-          neighborBaseOpacity + (candidateProgress * (1.0 - neighborBaseOpacity));
+
+      if (_entryPulseAnimation.value > 0.0 || _entryPulseController.isAnimating) {
+        final t = _entryPulseAnimation.value.clamp(0.0, 1.0);
+        if (t > 0.0) {
+          if (isSpecialBiome && biomeColor != null) {
+            final alpha = ui.lerpDouble(
+              MinesweeperConfig.nonSelectedBiomeBorderAlpha,
+              MinesweeperConfig.firstIterationBiomeBorderAlpha,
+              t,
+            )!;
+            return biomeColor.withValues(alpha: alpha);
+          } else {
+            return Color.lerp(
+              MinesweeperConfig.nonSelectedRegularBorderColor,
+              MinesweeperConfig.firstIterationRegularBorderColor,
+              t,
+            )!;
+          }
+        }
+      }
+
+      if (_idlePulseAnimation.value > 0.0 || _idlePulseController.isAnimating) {
+        final t = _idlePulseAnimation.value.clamp(0.0, 1.0);
+        if (t > 0.0) {
+          if (isSpecialBiome && biomeColor != null) {
+            final alpha = ui.lerpDouble(
+              MinesweeperConfig.nonSelectedBiomeBorderAlpha,
+              MinesweeperConfig.idlePulseBiomeBorderAlpha,
+              t,
+            )!;
+            return biomeColor.withValues(alpha: alpha);
+          } else {
+            return Color.lerp(
+              MinesweeperConfig.nonSelectedRegularBorderColor,
+              MinesweeperConfig.idlePulseRegularBorderColor,
+              t,
+            )!;
+          }
+        }
+      }
+
+      if (isSpecialBiome && biomeColor != null) {
+        return biomeColor.withValues(
+          alpha: MinesweeperConfig.nonSelectedBiomeBorderAlpha,
+        );
+      }
+      return MinesweeperConfig.nonSelectedRegularBorderColor;
     }
 
-    final unlockFade = _unlockAnimations[(regionRow, regionCol)]?.value ?? 1.0;
-    panelOpacity = (panelOpacity * unlockFade).clamp(0.0, 1.0);
+    final Color panelBackgroundColor = (isSpecialBiome && biomeColor != null)
+        ? Color.alphaBlend(
+            biomeColor.withValues(
+              alpha: MinesweeperConfig.regionPanelTintAlpha,
+            ),
+            MinesweeperConfig.regionPanelBaseColor,
+          )
+        : MinesweeperConfig.regularRegionPanelBackgroundColor;
+
+    final stackWidget = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // 1. Panel Container Box (Card Fill + Shadow + Normal Border)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: isSelected
+                ? AnimatedBuilder(
+                    animation: Listenable.merge([
+                      _entryPulseController,
+                      _idlePulseController,
+                    ]),
+                    builder: (context, _) {
+                      return Container(
+                        key: const ValueKey('actual_panel_container'),
+                        decoration: BoxDecoration(
+                          color: panelBackgroundColor,
+                          borderRadius: BorderRadius.circular(
+                            widget.panelCornerRadius,
+                          ),
+                          border: Border.all(
+                            color: getActiveBorderColor(),
+                            width: isSpecialBiome
+                                ? MinesweeperConfig.unknownBiomeBorderWidth
+                                : borderWidth,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 18,
+                              offset: const Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  )
+                : Container(
+                    key: const ValueKey('actual_panel_container'),
+                    decoration: BoxDecoration(
+                      color: panelBackgroundColor,
+                      borderRadius: BorderRadius.circular(
+                        widget.panelCornerRadius,
+                      ),
+                      border: Border.all(
+                        color: getActiveBorderColor(),
+                        width: isSpecialBiome
+                            ? MinesweeperConfig.unknownBiomeBorderWidth
+                            : borderWidth,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 18,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ),
+
+        // 2. Cell Grid (Entire Region)
+        Positioned(
+          left: paddingAmount + borderWidth,
+          top: paddingAmount + borderWidth,
+          width: activeGridWidth,
+          height: activeGridHeight,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (int r = 0; r < widget.regionRows; r++)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (int c = 0; c < widget.regionCols; c++)
+                      _buildCellForPanel(
+                        dr,
+                        dc,
+                        r,
+                        c,
+                        totalTileSize,
+                        cellGap,
+                        biomeColor: isSpecialBiome ? biomeColor : null,
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+
+        // 3. Shockwave Layer (Active Region Only)
+        if (dr == 0 && dc == 0)
+          Positioned(
+            left: paddingAmount + borderWidth,
+            top: paddingAmount + borderWidth,
+            width: activeGridWidth,
+            height: activeGridHeight,
+            child: IgnorePointer(
+              child: ShockwaveLayer(
+                controller: _shockwaveLayerController,
+              ),
+            ),
+          ),
+      ],
+    );
+
+    final imageFilteredWidget = ImageFiltered(
+      imageFilter: ui.ImageFilter.matrix(Matrix4.identity().storage),
+      child: stackWidget,
+    );
+
+    final Widget opacityWidget = (unlockAnimation != null)
+        ? AnimatedBuilder(
+            animation: unlockAnimation,
+            builder: (context, child) => Opacity(
+              opacity: unlockAnimation.value.clamp(0.0, 1.0),
+              child: child,
+            ),
+            child: imageFilteredWidget,
+          )
+        : Opacity(
+            opacity: 1.0,
+            child: imageFilteredWidget,
+          );
 
     return Positioned(
       key: ValueKey('region_panel_${dr}_$dc'),
@@ -1814,172 +2342,26 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       width: panelWidth,
       height: panelHeight,
       child: RepaintBoundary(
-        child: Opacity(
-          opacity: panelOpacity.clamp(0.0, 1.0),
-          child: ImageFiltered(
-            imageFilter: ui.ImageFilter.matrix(Matrix4.identity().storage),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                // 1. Panel Container Box (Card Fill + Shadow + Normal Border)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      key: const ValueKey('actual_panel_container'),
-                      decoration: BoxDecoration(
-                        color: AppColors.panelMedium,
-                        borderRadius:
-                            BorderRadius.circular(widget.panelCornerRadius),
-                        border: Border.all(
-                          color: AppColors.outlineDim,
-                          width: borderWidth,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            blurRadius: 18,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 2. Cell Grid (Entire Region)
-                Positioned(
-                  left: paddingAmount + borderWidth,
-                  top: paddingAmount + borderWidth,
-                  width: activeGridWidth,
-                  height: activeGridHeight,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (int r = 0; r < widget.regionRows; r++)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            for (int c = 0; c < widget.regionCols; c++)
-                              _buildCellForPanel(
-                                dr,
-                                dc,
-                                r,
-                                c,
-                                totalTileSize,
-                                cellGap,
-                              ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-
-                // 3. Shockwave Layer (Active Region Only)
-                if (dr == 0 && dc == 0)
-                  Positioned(
-                    left: paddingAmount + borderWidth,
-                    top: paddingAmount + borderWidth,
-                    width: activeGridWidth,
-                    height: activeGridHeight,
-                    child: IgnorePointer(
-                      child: ShockwaveLayer(
-                        controller: _shockwaveLayerController,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        child: opacityWidget,
       ),
     );
   }
 
   Widget _buildBoard(
+    double virtualWidth,
+    double virtualHeight,
+    double originX,
+    double originY,
+    List<(int, int)> panelOrder,
     double totalTileSize,
     double cellGap,
     double paddingAmount,
     double borderWidth,
     double panelGap,
   ) {
-    final activeGridWidth = widget.regionCols * totalTileSize;
-    final activeGridHeight = widget.regionRows * totalTileSize;
-    final panelWidth =
-        activeGridWidth + (paddingAmount * 2) + (borderWidth * 2);
-    final panelHeight =
-        activeGridHeight + (paddingAmount * 2) + (borderWidth * 2);
-    final panelInset = paddingAmount + borderWidth;
-    final peekMarginX = widget.peekDepth * totalTileSize + panelInset + panelGap;
-    final peekMarginY = widget.peekDepth * totalTileSize + panelInset + panelGap;
-
-    final viewportWidth = panelWidth + (2 * peekMarginX);
-    final viewportHeight = panelHeight + (2 * peekMarginY);
-
-    final nearAlpha =
-        (1.0 - widget.gradientNearTransparency).clamp(0.0, 1.0);
-    final farAlpha =
-        (1.0 - widget.gradientFarTransparency).clamp(0.0, 1.0);
-
-    // Stable rendering order:
-    // 1. Non-active, non-incoming neighbor panels
-    // 2. Outgoing center panel (0, 0)
-    // 3. Incoming panel (_swipeDRow, _swipeDCol)
-    final otherPanels = <(int, int)>[];
-    (int, int)? incomingPanel;
-    (int, int)? centerPanel;
-
-    final panelsToRender = <(int, int)>{};
-
-    // 1. Current selected region and its 8 neighbors (only if accessible)
-    for (int dr = -1; dr <= 1; dr++) {
-      for (int dc = -1; dc <= 1; dc++) {
-        final r = _currentRegionRow + dr;
-        final c = _currentRegionCol + dc;
-        if (_isRegionAccessible(r, c)) {
-          panelsToRender.add((dr, dc));
-        }
-      }
-    }
-
-    // 2. The MOMENT the player starts dragging (or transitioning),
-    // load the neighbors of the potential new selected region (only if accessible)!
-    if (_swipeDRow != 0 || _swipeDCol != 0) {
-      for (int r = -1; r <= 1; r++) {
-        for (int c = -1; c <= 1; c++) {
-          final pDr = _swipeDRow + r;
-          final pDc = _swipeDCol + c;
-          final targetR = _currentRegionRow + pDr;
-          final targetC = _currentRegionCol + pDc;
-          if (_isRegionAccessible(targetR, targetC)) {
-            panelsToRender.add((pDr, pDc));
-          }
-        }
-      }
-    }
-
-    for (final (dr, dc) in panelsToRender) {
-      if (dr == 0 && dc == 0) {
-        centerPanel = (0, 0);
-      } else if (_swipeDRow != 0 || _swipeDCol != 0) {
-        if (dr == _swipeDRow && dc == _swipeDCol) {
-          incomingPanel = (dr, dc);
-        } else {
-          otherPanels.add((dr, dc));
-        }
-      } else {
-        otherPanels.add((dr, dc));
-      }
-    }
-
-    final panelOrder = <(int, int)>[
-      ...otherPanels,
-      ?centerPanel,
-      ?incomingPanel,
-    ];
-
     return SizedBox(
-      width: viewportWidth,
-      height: viewportHeight,
+      width: virtualWidth,
+      height: virtualHeight,
       child: ClipRect(
         child: Stack(
           clipBehavior: Clip.hardEdge,
@@ -1993,31 +2375,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                 paddingAmount,
                 borderWidth,
                 panelGap,
+                originX,
+                originY,
               ),
-
-            // ── Game Area Gradient Overlay ───────────────────────────────
-            // Overlaid on top of the entire game area. Sized so it leaves the
-            // centered active region unaffected. Splits H and V linear gradients
-            // diagonally at the corners so they do not overlap.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  key: const ValueKey('game_area_gradient_overlay'),
-                  painter: GameAreaGradientPainter(
-                    centerRect: Rect.fromLTWH(
-                      peekMarginX,
-                      peekMarginY,
-                      panelWidth,
-                      panelHeight,
-                    ),
-                    nearAlpha: nearAlpha,
-                    farAlpha: farAlpha,
-                    color: AppColors.surface,
-                    style: widget.overlayGradientStyle,
-                  ),
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -2040,6 +2400,13 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         activeGridHeight + (paddingAmount * 2) + (borderWidth * 2);
     final strideX = panelWidth + panelGap;
     final strideY = panelHeight + panelGap;
+    final panelInset = paddingAmount + borderWidth;
+
+    // Minimum required visible margin: selected region + nearest 2 rows/columns of adjacent regions
+    final minMarginX = 2 * totalTileSize + panelInset + panelGap;
+    final minMarginY = 2 * totalTileSize + panelInset + panelGap;
+    final minViewportWidth = panelWidth + (2 * minMarginX);
+    final minViewportHeight = panelHeight + (2 * minMarginY);
 
     return Focus(
       focusNode: _focusNode,
@@ -2066,20 +2433,122 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         }
         return KeyEventResult.ignored;
       },
-      child: Stack(
-        children: [
-          GameScaffold(
-            gameState: widget.gameState,
-            spacing: 0,
-            showHeader: false,
-            isScrollable: false,
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: _onPointerDown,
-              onPointerMove: _onPointerMove,
-              onPointerUp: _onPointerUp,
-              onPointerCancel: _onPointerCancel,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final screenWidth = constraints.maxWidth;
+          final screenHeight = constraints.maxHeight;
+          final availableWidth =
+              screenWidth.isFinite ? screenWidth : minViewportWidth;
+          final availableHeight =
+              screenHeight.isFinite ? screenHeight : minViewportHeight;
+
+          // Downscale rule:
+          // No matter how narrow/short the screen size is, the selected region and
+          // the nearest two rows/columns of adjacent regions must always be visible!
+          final scale = min(
+            1.0,
+            min(
+              availableWidth / minViewportWidth,
+              availableHeight / minViewportHeight,
+            ),
+          );
+          _currentScale = scale;
+          final virtualWidth = availableWidth / scale;
+          final virtualHeight = availableHeight / scale;
+
+          final originX = (virtualWidth - panelWidth) / 2.0;
+          final originY = (virtualHeight - panelHeight) / 2.0;
+
+          final minDc =
+              ((- (originX + panelWidth + _planeOffset.dx)) / strideX).floor() - 1;
+          final maxDc =
+              ((virtualWidth - originX - _planeOffset.dx) / strideX).ceil() + 1;
+          final minDr =
+              ((- (originY + panelHeight + _planeOffset.dy)) / strideY).floor() - 1;
+          final maxDr =
+              ((virtualHeight - originY - _planeOffset.dy) / strideY).ceil() + 1;
+
+          int startDr = min(minDr, -1);
+          int endDr = max(maxDr, 1);
+          int startDc = min(minDc, -1);
+          int endDc = max(maxDc, 1);
+
+          if (_swipeDRow != 0 || _swipeDCol != 0) {
+            startDr = min(startDr, _swipeDRow - 1);
+            endDr = max(endDr, _swipeDRow + 1);
+            startDc = min(startDc, _swipeDCol - 1);
+            endDc = max(endDc, _swipeDCol + 1);
+          }
+
+          final panelsToRender = <(int, int)>{};
+          for (int dr = startDr; dr <= endDr; dr++) {
+            for (int dc = startDc; dc <= endDc; dc++) {
+              final r = _currentRegionRow + dr;
+              final c = _currentRegionCol + dc;
+
+              if (!widget.isInfiniteWorld) {
+                if (widget.regionsY > 0 && (r < 0 || r >= widget.regionsY)) continue;
+                if (widget.regionsX > 0 && (c < 0 || c >= widget.regionsX)) continue;
+              }
+
+              if (_isRegionAccessible(r, c)) {
+                final pLeft = originX + (dc * strideX) + _planeOffset.dx;
+                final pTop = originY + (dr * strideY) + _planeOffset.dy;
+                final pRight = pLeft + panelWidth;
+                final pBottom = pTop + panelHeight;
+
+                final isImmediate = (dr.abs() <= 1 && dc.abs() <= 1) ||
+                    ((_swipeDRow != 0 || _swipeDCol != 0) &&
+                        (dr - _swipeDRow).abs() <= 1 &&
+                        (dc - _swipeDCol).abs() <= 1);
+                final intersectsViewport = pRight > 0 &&
+                    pLeft < virtualWidth &&
+                    pBottom > 0 &&
+                    pTop < virtualHeight;
+
+                if (isImmediate || intersectsViewport) {
+                  panelsToRender.add((dr, dc));
+                }
+              }
+            }
+          }
+
+          final otherPanels = <(int, int)>[];
+          (int, int)? incomingPanel;
+          (int, int)? centerPanel;
+
+          for (final (dr, dc) in panelsToRender) {
+            if (dr == 0 && dc == 0) {
+              centerPanel = (0, 0);
+            } else if (_swipeDRow != 0 || _swipeDCol != 0) {
+              if (dr == _swipeDRow && dc == _swipeDCol) {
+                incomingPanel = (dr, dc);
+              } else {
+                otherPanels.add((dr, dc));
+              }
+            } else {
+              otherPanels.add((dr, dc));
+            }
+          }
+
+          final panelOrder = <(int, int)>[
+            ...otherPanels,
+            ?centerPanel,
+            ?incomingPanel,
+          ];
+
+          final boardWidget = SizedBox(
+            width: availableWidth,
+            height: availableHeight,
+            child: FittedBox(
+              fit: BoxFit.fill,
+              alignment: Alignment.center,
               child: _buildBoard(
+                virtualWidth,
+                virtualHeight,
+                originX,
+                originY,
+                panelOrder,
                 totalTileSize,
                 cellGap,
                 paddingAmount,
@@ -2087,972 +2556,646 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                 panelGap,
               ),
             ),
-          ),
+          );
 
-          // ── Top Header Controls (Mine Counter, Minimap, Pause Button) ───────
-          // Aligned horizontally with the resting position of the selected region:
-          // Left edge of the mine counter aligns with the left edge of the region.
-          // Minimap is centered in the region.
-          // Right edge of the pause button aligns with the right edge of the region.
-          // They remain stationary at the top and do not move during swipe.
-          Positioned(
-            top: 12,
-            left: 0,
-            right: 0,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: SizedBox(
-                width: panelWidth,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: _RegionMineCounterBadge(
-                          remainingMines: _currentRegionRemainingMines,
-                        ),
-                      ),
-                    ),
-                    RegionMiniMapSelector(
-                      regionsX: widget.regionsX,
-                      regionsY: widget.regionsY,
-                      currentRegionRow: _currentRegionRow,
-                      currentRegionCol: _currentRegionCol,
-                      initialRegionRow: widget.initialRegionY,
-                      initialRegionCol: widget.initialRegionX,
-                      selectedRegionRow: (_isThresholdFlipped || _isTransitioning)
-                          ? (_currentRegionRow + _swipeDRow)
-                          : _currentRegionRow,
-                      selectedRegionCol: (_isThresholdFlipped || _isTransitioning)
-                          ? (_currentRegionCol + _swipeDCol)
-                          : _currentRegionCol,
-                      regionRows: widget.regionRows,
-                      regionCols: widget.regionCols,
-                      hasRegionRevealed: (r, c) => _hasRegionRevealed(r, c),
-                      isRegionAccessible: _isRegionAccessible,
-                      unlockFadeDuration: widget.regionUnlockFadeDuration,
-                      planeOffset: _planeOffset,
-                      strideX: strideX,
-                      strideY: strideY,
-                      onTap: () => showMinimapPopup(context),
-                    ),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.topRight,
-                        child: _RegionPauseButton(
-                          onTap: widget.onPause,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+          final compactWidth =
+              (MinesweeperConfig.minimapCols * MinesweeperConfig.minimapCellSlot) +
+              (MinesweeperConfig.minimapPadding * 2) +
+              (MinesweeperConfig.headerControlBorderWidth * 2);
+          final compactHeight =
+              (MinesweeperConfig.minimapRows * MinesweeperConfig.minimapCellSlot) +
+              (MinesweeperConfig.minimapPadding * 2) +
+              (MinesweeperConfig.headerControlBorderWidth * 2);
 
-// ── Game Area Gradient Overlay Painter ───────────────────────────────────────
+          final padding = MinesweeperConfig.minimapExpandedPadding;
+          final expandedSize = min(
+            availableWidth - (2 * padding),
+            availableHeight - (2 * padding),
+          );
+          final expandedWidth = expandedSize;
+          final expandedHeight = expandedSize;
 
-class GameAreaGradientPainter extends CustomPainter {
-  final Rect centerRect;
-  final double nearAlpha;
-  final double farAlpha;
-  final Color color;
-  final OverlayGradientStyle style;
+          final minimapSizeRatio =
+              compactWidth > 0 ? expandedWidth / compactWidth : 1.0;
 
-  const GameAreaGradientPainter({
-    required this.centerRect,
-    required this.nearAlpha,
-    required this.farAlpha,
-    required this.color,
-    this.style = OverlayGradientStyle.splitLinear,
-  });
+          int minCol = 0;
+          int maxCol = widget.regionsX > 0 ? widget.regionsX - 1 : 0;
+          int minRow = 0;
+          int maxRow = widget.regionsY > 0 ? widget.regionsY - 1 : 0;
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
+          void includeCoord(int r, int c) {
+            if (c < minCol) minCol = c;
+            if (c > maxCol) maxCol = c;
+            if (r < minRow) minRow = r;
+            if (r > maxRow) maxRow = r;
+          }
 
-    final x1 = centerRect.left;
-    final y1 = centerRect.top;
-    final x2 = centerRect.right;
-    final y2 = centerRect.bottom;
+          if (!widget.lockInaccessibleRegions) {
+            minCol = 0;
+            maxCol = widget.regionsX > 0 ? widget.regionsX - 1 : 0;
+            minRow = 0;
+            maxRow = widget.regionsY > 0 ? widget.regionsY - 1 : 0;
+            if (widget.isInfiniteWorld) {
+              includeCoord(widget.initialRegionY, widget.initialRegionX);
+              includeCoord(_currentRegionRow, _currentRegionCol);
+              for (final k in _regions.keys) {
+                includeCoord(k.$1, k.$2);
+              }
+              for (final k in _unlockedRegions) {
+                includeCoord(k.$1, k.$2);
+              }
+            }
+          } else {
+            minCol = _currentRegionCol;
+            maxCol = _currentRegionCol;
+            minRow = _currentRegionRow;
+            maxRow = _currentRegionRow;
+            includeCoord(widget.initialRegionY, widget.initialRegionX);
+            includeCoord(_currentRegionRow, _currentRegionCol);
+            final candidateRegions = <(int, int)>{
+              (widget.initialRegionY, widget.initialRegionX),
+              (_currentRegionRow, _currentRegionCol),
+              ..._unlockedRegions,
+            };
 
-    final nearColor = color.withValues(alpha: nearAlpha);
-    final farColor = color.withValues(alpha: farAlpha);
+            if (widget.regionsX > 0 &&
+                widget.regionsY > 0 &&
+                !widget.isInfiniteWorld) {
+              for (int r = 0; r < widget.regionsY; r++) {
+                for (int c = 0; c < widget.regionsX; c++) {
+                  candidateRegions.add((r, c));
+                }
+              }
+            } else {
+              for (final key in _regions.keys) {
+                candidateRegions.add(key);
+                for (int dr = -1; dr <= 1; dr++) {
+                  for (int dc = -1; dc <= 1; dc++) {
+                    candidateRegions.add((key.$1 + dr, key.$2 + dc));
+                  }
+                }
+              }
+            }
 
-    if (style == OverlayGradientStyle.radial) {
-      final clipPath = Path()
-        ..addRect(Rect.fromLTWH(0, 0, w, h))
-        ..addRect(centerRect)
-        ..fillType = PathFillType.evenOdd;
-
-      canvas.save();
-      canvas.clipPath(clipPath);
-
-      final center = Offset(w / 2, h / 2);
-      final radius = sqrt((w / 2) * (w / 2) + (h / 2) * (h / 2));
-      final innerRadius = min(centerRect.width, centerRect.height) / 2;
-      final tInner = (innerRadius / radius).clamp(0.0, 1.0);
-
-      final paint = Paint()
-        ..shader = ui.Gradient.radial(
-          center,
-          radius,
-          [nearColor, nearColor, farColor],
-          [0.0, tInner, 1.0],
-        );
-      canvas.drawRect(Rect.fromLTWH(0, 0, w, h), paint);
-      canvas.restore();
-      return;
-    }
-
-    // ── Split Linear Gradients (One H, One V) ─────────────────────────
-    // Diagonal splits at the 4 corners:
-    // Top-Left: (0, 0) <-> (x1, y1)
-    // Top-Right: (w, 0) <-> (x2, y1)
-    // Bottom-Left: (0, h) <-> (x1, y2)
-    // Bottom-Right: (w, h) <-> (x2, y2)
-    //
-    // The horizontal and vertical linear gradients meet precisely at
-    // these diagonal miter lines without overlapping. Along each diagonal,
-    // the progress parameters match identically, ensuring continuous
-    // color blending with zero overlap or double-darkening artifact.
-
-    // 1. Top Trapezoid (Vertical Linear Gradient)
-    final topPath = Path()
-      ..moveTo(0, 0)
-      ..lineTo(w, 0)
-      ..lineTo(x2, y1)
-      ..lineTo(x1, y1)
-      ..close();
-
-    final topPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(0, y1),
-        Offset(0, 0),
-        [nearColor, farColor],
-      );
-    canvas.drawPath(topPath, topPaint);
-
-    // 2. Bottom Trapezoid (Vertical Linear Gradient)
-    final bottomPath = Path()
-      ..moveTo(x1, y2)
-      ..lineTo(x2, y2)
-      ..lineTo(w, h)
-      ..lineTo(0, h)
-      ..close();
-
-    final bottomPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(0, y2),
-        Offset(0, h),
-        [nearColor, farColor],
-      );
-    canvas.drawPath(bottomPath, bottomPaint);
-
-    // 3. Left Trapezoid (Horizontal Linear Gradient)
-    final leftPath = Path()
-      ..moveTo(0, 0)
-      ..lineTo(x1, y1)
-      ..lineTo(x1, y2)
-      ..lineTo(0, h)
-      ..close();
-
-    final leftPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(x1, 0),
-        Offset(0, 0),
-        [nearColor, farColor],
-      );
-    canvas.drawPath(leftPath, leftPaint);
-
-    // 4. Right Trapezoid (Horizontal Linear Gradient)
-    final rightPath = Path()
-      ..moveTo(x2, y1)
-      ..lineTo(w, 0)
-      ..lineTo(w, h)
-      ..lineTo(x2, y2)
-      ..close();
-
-    final rightPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(x2, 0),
-        Offset(w, 0),
-        [nearColor, farColor],
-      );
-    canvas.drawPath(rightPath, rightPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant GameAreaGradientPainter oldDelegate) {
-    return oldDelegate.centerRect != centerRect ||
-        oldDelegate.nearAlpha != nearAlpha ||
-        oldDelegate.farAlpha != farAlpha ||
-        oldDelegate.color != color ||
-        oldDelegate.style != style;
-  }
-}
-
-// ── Region Mine Counter Badge ────────────────────────────────────────────────
-
-const double _headerControlHeight = 28.0;
-
-class _RegionMineCounterBadge extends StatelessWidget {
-  final int remainingMines;
-
-  const _RegionMineCounterBadge({
-    required this.remainingMines,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: const ValueKey('region_mine_counter_badge'),
-      height: _headerControlHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: AppColors.panelDim,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.outlineDim, width: 1),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Icon(
-            const MinesweeperConfig().icon,
-            size: 14,
-            color: AppColors.red,
-          ),
-          const SizedBox(width: 5),
-          Text(
-            '$remainingMines',
-            style: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textBright,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Region Pause Button ──────────────────────────────────────────────────────
-
-class _RegionPauseButton extends StatelessWidget {
-  final VoidCallback? onTap;
-
-  const _RegionPauseButton({this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        key: const ValueKey('region_pause_button'),
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          width: _headerControlHeight,
-          height: _headerControlHeight,
-          decoration: BoxDecoration(
-            color: AppColors.panelDim,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: AppColors.outlineDim, width: 1),
-          ),
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.pause_rounded,
-            size: 14,
-            color: AppColors.textBright,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Interactive Region Mini-Map Selector ────────────────────────────────────
-
-class RegionMiniMapSelector extends StatefulWidget {
-  final int regionsX;
-  final int regionsY;
-  final int minimapCols;
-  final int minimapRows;
-  final int currentRegionRow;
-  final int currentRegionCol;
-  final int? initialRegionRow;
-  final int? initialRegionCol;
-  final int? selectedRegionRow;
-  final int? selectedRegionCol;
-  final int regionRows;
-  final int regionCols;
-  final Uint8List? cellStates;
-  final int? worldCols;
-  final bool Function(int r, int c)? hasRegionRevealed;
-  final bool Function(int r, int c)? isRegionAccessible;
-  final Duration unlockFadeDuration;
-  final Offset planeOffset;
-  final double strideX;
-  final double strideY;
-  final double flipProgress;
-  final int swipeDRow;
-  final int swipeDCol;
-  final VoidCallback onTap;
-
-  const RegionMiniMapSelector({
-    super.key,
-    required this.regionsX,
-    required this.regionsY,
-    this.minimapCols = MinesweeperConfig.minimapCols,
-    this.minimapRows = MinesweeperConfig.minimapRows,
-    required this.currentRegionRow,
-    required this.currentRegionCol,
-    this.initialRegionRow,
-    this.initialRegionCol,
-    this.selectedRegionRow,
-    this.selectedRegionCol,
-    required this.regionRows,
-    required this.regionCols,
-    this.cellStates,
-    this.worldCols,
-    this.hasRegionRevealed,
-    this.isRegionAccessible,
-    this.unlockFadeDuration = MinesweeperConfig.regionUnlockFadeDuration,
-    this.planeOffset = Offset.zero,
-    this.strideX = 1.0,
-    this.strideY = 1.0,
-    this.flipProgress = 0.0,
-    this.swipeDRow = 0,
-    this.swipeDCol = 0,
-    required this.onTap,
-  });
-
-  @override
-  State<RegionMiniMapSelector> createState() => _RegionMiniMapSelectorState();
-}
-
-class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<Offset> _animation;
-  late Offset _targetSector;
-
-  Offset _getTargetSector() {
-    final targetCol = widget.selectedRegionCol ?? widget.currentRegionCol;
-    final targetRow = widget.selectedRegionRow ?? widget.currentRegionRow;
-    return Offset(targetCol.toDouble(), targetRow.toDouble());
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _targetSector = _getTargetSector();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    )..addListener(() {
-        setState(() {});
-      });
-    _animation = AlwaysStoppedAnimation<Offset>(_targetSector);
-  }
-
-  @override
-  void didUpdateWidget(covariant RegionMiniMapSelector oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final newTarget = _getTargetSector();
-    if (newTarget != _targetSector) {
-      final currentPos = _animation.value;
-      _targetSector = newTarget;
-      _animation = Tween<Offset>(
-        begin: currentPos,
-        end: newTarget,
-      ).animate(
-        CurvedAnimation(
-          parent: _controller,
-          curve: Curves.easeOut,
-        ),
-      );
-      _controller.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final viewportWidth = widget.minimapCols * 10.0;
-    final viewportHeight = widget.minimapRows * 10.0;
-    final centerX = viewportWidth / 2.0;
-    final centerY = viewportHeight / 2.0;
-
-    final scaleX = widget.strideX > 0 ? 10.0 / widget.strideX : 0.0;
-    final scaleY = widget.strideY > 0 ? 10.0 / widget.strideY : 0.0;
-
-    final activeSelectedRow = widget.selectedRegionRow ?? widget.currentRegionRow;
-    final activeSelectedCol = widget.selectedRegionCol ?? widget.currentRegionCol;
-
-    final mapLeft =
-        (centerX - (widget.currentRegionCol * 10.0 + 5.0)) +
-        (widget.planeOffset.dx * scaleX);
-    final mapTop =
-        (centerY - (widget.currentRegionRow * 10.0 + 5.0)) +
-        (widget.planeOffset.dy * scaleY);
-
-    final sectorPos = _animation.value;
-    final overlayLeft = mapLeft + (sectorPos.dx * 10.0) + 1.0;
-    final overlayTop = mapTop + (sectorPos.dy * 10.0) + 1.0;
-
-    final halfVisibleCols = (widget.minimapCols / 2).ceil();
-    final halfVisibleRows = (widget.minimapRows / 2).ceil();
-    final minCol = widget.currentRegionCol - halfVisibleCols;
-    final maxCol = widget.currentRegionCol + halfVisibleCols;
-    final minRow = widget.currentRegionRow - halfVisibleRows;
-    final maxRow = widget.currentRegionRow + halfVisibleRows;
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        key: const ValueKey('minimap_selector'),
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: Container(
-          padding: const EdgeInsets.all(2.5),
-          decoration: BoxDecoration(
-            color: AppColors.panelDim,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: AppColors.outlineDim, width: 1),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2.5),
-            child: SizedBox(
-              width: viewportWidth,
-              height: viewportHeight,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Back layer: Translating map (no white selected coloring)
-                  Positioned.fill(
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        for (int c = minCol; c <= maxCol; c++)
-                          for (int r = minRow; r <= maxRow; r++)
-                            Positioned(
-                              left: mapLeft + (c * 10.0),
-                              top: mapTop + (r * 10.0),
-                              width: 10.0,
-                              height: 10.0,
-                              child: _buildMiniMapCell(r, c),
-                            ),
-                      ],
-                    ),
-                  ),
-
-                  // Front layer: Animated selection tracking the selected region in the back layer
-                  Positioned(
-                    key: ValueKey(
-                      'active_minimap_sector_${activeSelectedCol + 1}_${activeSelectedRow + 1}',
-                    ),
-                    left: overlayLeft,
-                    top: overlayTop,
-                    width: 8.0,
-                    height: 8.0,
-                    child: IgnorePointer(
-                      child: AnimatedContainer(
-                        key: const ValueKey('active_minimap_sector'),
-                        duration: Duration.zero,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(1.5),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMiniMapCell(int r, int c) {
-    final isAccessible = widget.isRegionAccessible?.call(r, c) ?? true;
-
-    // Check if region has any revealed cells
-    bool hasRevealed = false;
-    if (widget.hasRegionRevealed != null) {
-      hasRevealed = widget.hasRegionRevealed!(r, c);
-    } else if (widget.cellStates != null && widget.worldCols != null) {
-      final minR = r * widget.regionRows;
-      final minC = c * widget.regionCols;
-      for (int lr = 0; lr < widget.regionRows; lr++) {
-        for (int lc = 0; lc < widget.regionCols; lc++) {
-          final gIdx = (minR + lr) * widget.worldCols! + (minC + lc);
-          if (gIdx >= 0 && gIdx < widget.cellStates!.length) {
-            if (widget.cellStates![gIdx] == CellState.revealed ||
-                widget.cellStates![gIdx] == CellState.hiddenNumber) {
-              hasRevealed = true;
-              break;
+            for (final coord in candidateRegions) {
+              if (_isRegionAccessible(coord.$1, coord.$2)) {
+                includeCoord(coord.$1, coord.$2);
+              }
             }
           }
-        }
-        if (hasRevealed) break;
-      }
-    }
 
-    Color cellBg;
-    if (!isAccessible) {
-      cellBg = Colors.transparent;
-    } else if (hasRevealed) {
-      cellBg = AppColors.greenMedium;
-    } else {
-      cellBg = AppColors.panelHigh;
-    }
-
-    final startR = widget.initialRegionRow ?? MinesweeperConfig.initialRegionY;
-    final startC = widget.initialRegionCol ?? MinesweeperConfig.initialRegionX;
-    final isStartingRegion = (r == startR && c == startC);
-
-    return Container(
-      key: ValueKey('minimap_sector_${c + 1}_${r + 1}'),
-      margin: const EdgeInsets.all(1.0),
-      child: AnimatedContainer(
-        duration: isAccessible ? widget.unlockFadeDuration : Duration.zero,
-        curve: Curves.easeOut,
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(
-          color: cellBg,
-          borderRadius: BorderRadius.circular(1.5),
-          border: isStartingRegion
-              ? Border.all(
-                  color: const Color(0x66FFFFFF),
-                  width: 1.0,
-                )
-              : null,
-        ),
-        child: isStartingRegion
-            ? const Center(
-                child: DecoratedBox(
-                  key: ValueKey('minimap_starting_region_marker'),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                  child: SizedBox(
-                    width: 3.0,
-                    height: 3.0,
-                  ),
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // 1. Board fills entire screen (over safe areas)
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _onPointerDown,
+                  onPointerMove: _onPointerMove,
+                  onPointerUp: _onPointerUp,
+                  onPointerCancel: _onPointerCancel,
+                  child: boardWidget,
                 ),
-              )
-            : null,
-      ),
-    );
-  }
-}
+              ),
 
-// ── Region Cell Widget (Classic Look & Feel) ────────────────────────────────
+              // 2. Control bar (top bar in portrait, left sidebar in landscape) with opaque background
+              Positioned.fill(
+                child: Builder(
+                  builder: (context) {
+                  final mediaQuery = MediaQuery.of(context);
+                  final safePadding = mediaQuery.padding;
+                  final safeWidth =
+                      max(0.0, availableWidth - safePadding.left - safePadding.right);
+                  final isHorizontal = availableWidth > availableHeight;
 
-class _RegionCellWidget extends StatefulWidget {
-  final int cellState;
-  final int adjacentMines;
-  final bool hasMine;
-  final double gap;
-  final bool gameOver;
-  final bool gameWon;
-  final bool isNeighbor;
-  final bool isInteractable;
-  final VoidCallback? onTap;
-  final VoidCallback? onLongPress;
-  final Duration longTapDuration;
-  final double backgroundOpacity;
-  final double contentOpacity;
-  final Color touchHighlightColor;
-  final Duration touchHighlightFadeDuration;
+                  final double targetWidth =
+                      _isMinimapExpanded ? expandedWidth : compactWidth;
+                  final double targetHeight =
+                      _isMinimapExpanded ? expandedHeight : compactHeight;
 
-  const _RegionCellWidget({
-    required this.cellState,
-    required this.adjacentMines,
-    required this.hasMine,
-    required this.gap,
-    required this.gameOver,
-    required this.gameWon,
-    this.isNeighbor = false,
-    this.isInteractable = true,
-    this.backgroundOpacity = 1.0,
-    this.contentOpacity = 1.0,
-    this.onTap,
-    this.onLongPress,
-    this.longTapDuration = MinesweeperConfig.longTapDuration,
-    this.touchHighlightColor = MinesweeperConfig.touchHighlightColor,
-    this.touchHighlightFadeDuration = MinesweeperConfig.touchHighlightFadeDuration,
-  });
+                  final double targetTop = _isMinimapExpanded
+                      ? (availableHeight - expandedHeight) / 2.0
+                      : (isHorizontal
+                          ? (availableHeight - compactHeight) / 2.0
+                          : availableHeight -
+                              safePadding.bottom -
+                              MinesweeperConfig.headerControlTop -
+                              compactHeight);
 
-  static const _numberColors = [
-    AppColors.surface, // 0 (unused)
-    Colors.blue, // 1
-    Colors.green, // 2
-    Colors.red, // 3
-    Colors.indigo, // 4
-    Colors.brown, // 5
-    Colors.teal, // 6
-    Colors.purple, // 7
-    Colors.grey, // 8
-  ];
+                  final double targetLeft = _isMinimapExpanded
+                      ? (availableWidth - expandedWidth) / 2.0
+                      : (isHorizontal
+                          ? availableWidth -
+                              safePadding.right -
+                              MinesweeperConfig.headerCornerPadding -
+                              compactWidth
+                          : (availableWidth - compactWidth) / 2.0);
 
-  static final List<TextStyle> _numberTextStyles = List.generate(
-    9,
-    (i) => TextStyle(
-      fontSize: 15,
-      fontWeight: FontWeight.w900,
-      color: _numberColors[i],
-    ),
-  );
+                  final headerWidth = min(minViewportWidth, safeWidth) -
+                      (2 * MinesweeperConfig.headerCornerPadding);
+                  const minRequiredHeaderWidth = 200.0;
+                  final minimapScale = (!_isMinimapExpanded &&
+                          availableWidth < compactWidth + 24.0)
+                      ? (availableWidth / (compactWidth + 24.0))
+                      : 1.0;
 
-  @override
-  State<_RegionCellWidget> createState() => _RegionCellWidgetState();
-}
+                  final rankBadge = RegionRankBadge(
+                    rank: _currentRegionRank,
+                    isVertical: isHorizontal,
+                  );
 
-class _RegionCellWidgetState extends State<_RegionCellWidget> {
-  int? _activePointerId;
-  Offset? _downPosition;
-  bool _isPressed = false;
+                  final mineCounterBadge = RegionMineCounterBadge(
+                    remainingMines: _currentRegionRemainingMines,
+                    isVertical: isHorizontal,
+                  );
 
-  void _onPointerDown(PointerDownEvent event) {
-    if (!widget.isInteractable || widget.gameOver || widget.gameWon) return;
-    if (widget.cellState != CellState.unrevealed &&
-        widget.cellState != CellState.flagged) {
-      return;
-    }
-    if (_activePointerId != null) return;
-    _activePointerId = event.pointer;
-    _downPosition = event.position;
-    if (mounted) {
-      setState(() {
-        _isPressed = true;
-      });
-    }
-  }
+                  final pauseButton = RegionPauseButton(
+                    isGameOver: _gameOver,
+                    onTap: _gameOver
+                        ? () => Navigator.of(context)
+                            .popUntil((route) => route.isFirst)
+                        : (widget.onPause ??
+                            () => showOptionsPopup(context)),
+                  );
 
-  void _onPointerMove(PointerMoveEvent event) {
-    if (!_isPressed || event.pointer != _activePointerId) return;
-    if (_downPosition != null) {
-      final distance = (event.position - _downPosition!).distance;
-      if (distance > 12.0) {
-        if (mounted) {
-          setState(() {
-            _isPressed = false;
-          });
-        }
-      }
-    }
-  }
+                  final headerRow = Row(
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: rankBadge,
+                        ),
+                      ),
+                      mineCounterBadge,
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: pauseButton,
+                        ),
+                      ),
+                    ],
+                  );
 
-  void _onPointerUp(PointerUpEvent event) {
-    if (event.pointer == _activePointerId) {
-      _activePointerId = null;
-      _downPosition = null;
-      if (_isPressed && mounted) {
-        setState(() {
-          _isPressed = false;
-        });
-      }
-    }
-  }
+                  final bottomBarRow = Row(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      InventorySlotButton(
+                        key: const ValueKey('bottom_bar_left_button'),
+                        slotKey: const ValueKey('inventory_slot_0'),
+                        itemType: _inventory.isNotEmpty ? _inventory[0] : null,
+                        onTap: () => _useInventorySlot(0),
+                      ),
+                      const SizedBox(width: 8.0),
+                      InventorySlotButton(
+                        key: const ValueKey('bottom_bar_right_button'),
+                        slotKey: const ValueKey('inventory_slot_1'),
+                        itemType: _inventory.length > 1 ? _inventory[1] : null,
+                        onTap: () => _useInventorySlot(1),
+                      ),
+                      const Spacer(),
+                    ],
+                  );
 
-  void _onPointerCancel(PointerCancelEvent event) {
-    if (event.pointer == _activePointerId) {
-      _activePointerId = null;
-      _downPosition = null;
-      if (_isPressed && mounted) {
-        setState(() {
-          _isPressed = false;
-        });
-      }
-    }
-  }
+                  final leftSidebarWidth = safePadding.left +
+                      MinesweeperConfig.headerButtonSize +
+                      (2 * MinesweeperConfig.headerCornerPadding);
+                  final rightSidebarWidth = safePadding.right +
+                      MinesweeperConfig.headerButtonSize +
+                      (2 * MinesweeperConfig.headerCornerPadding);
+                  final topBarHeight = safePadding.top +
+                      (2 * MinesweeperConfig.headerControlTop) +
+                      MinesweeperConfig.headerBadgeHeight +
+                      1.0;
+                  final bottomBarHeight = safePadding.bottom +
+                      (2 * MinesweeperConfig.headerControlTop) +
+                      MinesweeperConfig.headerButtonSize +
+                      1.0;
+                  final overlayDepth = totalTileSize;
 
-  @override
-  void didUpdateWidget(_RegionCellWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if ((!widget.isInteractable ||
-            widget.cellState != oldWidget.cellState ||
-            (widget.cellState != CellState.unrevealed &&
-                widget.cellState != CellState.flagged)) &&
-        _isPressed) {
-      _isPressed = false;
-      _activePointerId = null;
-      _downPosition = null;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isRevealed = widget.cellState == CellState.revealed ||
-        widget.cellState == CellState.activatedMine ||
-        widget.cellState == CellState.revealedMine ||
-        widget.cellState == CellState.hiddenNumber;
-
-    final bgOpt = widget.backgroundOpacity.clamp(0.0, 1.0);
-    final cntOpt = widget.contentOpacity.clamp(0.0, 1.0);
-    final showBg = bgOpt > 0.01;
-    final bgColor = _backgroundColor(theme);
-
-    final isUnrevealedOrFlagged = widget.cellState == CellState.unrevealed ||
-        widget.cellState == CellState.flagged;
-
-    final shouldHighlight = _isPressed &&
-        isUnrevealedOrFlagged &&
-        widget.isInteractable &&
-        !widget.gameOver &&
-        !widget.gameWon;
-
-    final tileBox = Padding(
-      padding: EdgeInsets.all(widget.gap / 2),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Container(
-            decoration: showBg
-                ? BoxDecoration(
-                    color: bgColor.withValues(alpha: bgColor.a * bgOpt),
-                    borderRadius: BorderRadius.circular(8),
-                    border: isRevealed
-                        ? null
-                        : Border.all(
-                            color: AppColors.outlineDim.withValues(
-                              alpha: AppColors.outlineDim.a * bgOpt,
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // ── Control Bar Gradient Overlays (1 cell wide, pass-through touches) ──
+                      if (!isHorizontal) ...[
+                        Positioned(
+                          key: const ValueKey('top_bar_gradient_overlay'),
+                          top: topBarHeight,
+                          left: 0,
+                          right: 0,
+                          height: overlayDepth,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayNearAlpha,
+                                    ),
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayFarAlpha,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                            width: 0.5,
                           ),
-                    boxShadow: isRevealed || bgOpt < 0.05
-                        ? null
-                        : [
-                            BoxShadow(
-                              color: AppColors.whiteDim.withValues(
-                                alpha: AppColors.whiteDim.a * bgOpt,
+                        ),
+                        Positioned(
+                          key: const ValueKey('bottom_bar_gradient_overlay'),
+                          bottom: bottomBarHeight,
+                          left: 0,
+                          right: 0,
+                          height: overlayDepth,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                  colors: [
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayNearAlpha,
+                                    ),
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayFarAlpha,
+                                    ),
+                                  ],
+                                ),
                               ),
-                              offset: const Offset(-1, -1),
-                              blurRadius: 0,
                             ),
-                            BoxShadow(
-                              color: Colors.black.withValues(
-                                alpha: 0.25 * bgOpt,
+                          ),
+                        ),
+                      ] else ...[
+                        Positioned(
+                          key: const ValueKey('left_sidebar_gradient_overlay'),
+                          top: 0,
+                          bottom: 0,
+                          left: leftSidebarWidth,
+                          width: overlayDepth,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayNearAlpha,
+                                    ),
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayFarAlpha,
+                                    ),
+                                  ],
+                                ),
                               ),
-                              offset: const Offset(1, 1),
-                              blurRadius: 0,
                             ),
-                          ],
-                  )
-                : const BoxDecoration(color: Colors.transparent),
-          ),
-          if (!widget.isNeighbor)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: AnimatedOpacity(
-                  key: const ValueKey('cell_touch_highlight'),
-                  opacity: shouldHighlight ? 1.0 : 0.0,
-                  duration: widget.touchHighlightFadeDuration,
-                  curve: Curves.easeOut,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: widget.touchHighlightColor,
-                    ),
-                  ),
-                ),
+                          ),
+                        ),
+                        Positioned(
+                          key: const ValueKey('right_sidebar_gradient_overlay'),
+                          top: 0,
+                          bottom: 0,
+                          right: rightSidebarWidth,
+                          width: overlayDepth,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerRight,
+                                  end: Alignment.centerLeft,
+                                  colors: [
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayNearAlpha,
+                                    ),
+                                    AppColors.surface.withValues(
+                                      alpha: MinesweeperConfig
+                                          .barGradientOverlayFarAlpha,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      // ── Top Control Bar (H-bar in portrait, left sidebar in landscape) ──
+                      if (!isHorizontal)
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            key: const ValueKey('control_bar_background'),
+                            height: topBarHeight,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surface,
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: AppColors.outlineDim,
+                                  width: 1.0,
+                                ),
+                              ),
+                            ),
+                            child: SafeArea(
+                              bottom: false,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal:
+                                      MinesweeperConfig.headerCornerPadding,
+                                  vertical:
+                                      MinesweeperConfig.headerControlTop,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: SizedBox(
+                                    width: headerWidth,
+                                    child: headerWidth < minRequiredHeaderWidth
+                                        ? FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            alignment: Alignment.center,
+                                            child: SizedBox(
+                                              width: minRequiredHeaderWidth,
+                                              child: headerRow,
+                                            ),
+                                          )
+                                        : headerRow,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Positioned(
+                          top: 0,
+                          bottom: 0,
+                          left: 0,
+                          child: Container(
+                            key: const ValueKey('control_bar_background'),
+                            width: leftSidebarWidth,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surface,
+                              border: Border(
+                                right: BorderSide(
+                                  color: AppColors.outlineDim,
+                                  width: 1.0,
+                                ),
+                              ),
+                            ),
+                            child: SafeArea(
+                              right: false,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical:
+                                      MinesweeperConfig.headerControlTop,
+                                  horizontal:
+                                      MinesweeperConfig.headerCornerPadding,
+                                ),
+                                child: Column(
+                                  children: [
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.topCenter,
+                                        child: rankBadge,
+                                      ),
+                                    ),
+                                    mineCounterBadge,
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.bottomCenter,
+                                        child: pauseButton,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // ── Bottom Control Bar (H-bar in portrait, right sidebar in landscape) ──
+                      if (!isHorizontal)
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            key: const ValueKey('bottom_control_bar_background'),
+                            height: bottomBarHeight,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surface,
+                              border: Border(
+                                top: BorderSide(
+                                  color: AppColors.outlineDim,
+                                  width: 1.0,
+                                ),
+                              ),
+                            ),
+                            child: SafeArea(
+                              top: false,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal:
+                                      MinesweeperConfig.headerCornerPadding,
+                                  vertical:
+                                      MinesweeperConfig.headerControlTop,
+                                ),
+                                child: bottomBarRow,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Positioned(
+                          top: 0,
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            key: const ValueKey('bottom_control_bar_background'),
+                            width: rightSidebarWidth,
+                            decoration: const BoxDecoration(
+                              color: AppColors.surface,
+                              border: Border(
+                                left: BorderSide(
+                                  color: AppColors.outlineDim,
+                                  width: 1.0,
+                                ),
+                              ),
+                            ),
+                            child: SafeArea(
+                              left: false,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical:
+                                      MinesweeperConfig.headerControlTop,
+                                  horizontal:
+                                      MinesweeperConfig.headerCornerPadding,
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    const Spacer(),
+                                    InventorySlotButton(
+                                      key: const ValueKey('bottom_bar_top_button'),
+                                      slotKey: const ValueKey('inventory_slot_0'),
+                                      itemType: _inventory.isNotEmpty
+                                          ? _inventory[0]
+                                          : null,
+                                      onTap: () => _useInventorySlot(0),
+                                    ),
+                                    const SizedBox(height: 8.0),
+                                    InventorySlotButton(
+                                      key: const ValueKey(
+                                          'bottom_bar_bottom_button'),
+                                      slotKey: const ValueKey('inventory_slot_1'),
+                                      itemType: _inventory.length > 1
+                                          ? _inventory[1]
+                                          : null,
+                                      onTap: () => _useInventorySlot(1),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // ── Expanded Minimap Backdrop Barrier ───────────────────────────
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          ignoring: !_isMinimapExpanded,
+                          child: AnimatedOpacity(
+                            duration: MinesweeperConfig.minimapExpandDuration,
+                            curve: MinesweeperConfig.minimapExpandCurve,
+                            opacity: _isMinimapExpanded ? 1.0 : 0.0,
+                            child: GestureDetector(
+                              key: const ValueKey('minimap_barrier'),
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _selectAndCollapseMinimap,
+                              child: const ColoredBox(
+                                color: AppColors.overlayBarrier,
+                                child: SizedBox.expand(),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // ── Minimap (Animated Position, Size & Expansion) ──
+                      AnimatedPositioned(
+                        duration: MinesweeperConfig.minimapExpandDuration,
+                        curve: MinesweeperConfig.minimapExpandCurve,
+                        top: targetTop,
+                        left: targetLeft,
+                        width: targetWidth,
+                        height: targetHeight,
+                        child: RepaintBoundary(
+                          child: Transform.scale(
+                            scale: minimapScale,
+                            child: RegionMiniMapSelector(
+                              regionsX: widget.regionsX,
+                              regionsY: widget.regionsY,
+                              isInfiniteWorld: widget.isInfiniteWorld,
+                              currentRegionRow: _currentRegionRow,
+                              currentRegionCol: _currentRegionCol,
+                              initialRegionRow: widget.initialRegionY,
+                              initialRegionCol: widget.initialRegionX,
+                              selectedRegionRow: _isMinimapExpanded
+                                  ? (_extendedSelectedRegion?.$1 ??
+                                      _currentRegionRow)
+                                  : ((_isThresholdFlipped ||
+                                          _isTransitioning)
+                                      ? (_currentRegionRow + _swipeDRow)
+                                      : _currentRegionRow),
+                              selectedRegionCol: _isMinimapExpanded
+                                  ? (_extendedSelectedRegion?.$2 ??
+                                      _currentRegionCol)
+                                  : ((_isThresholdFlipped ||
+                                          _isTransitioning)
+                                      ? (_currentRegionCol + _swipeDCol)
+                                      : _currentRegionCol),
+                              regionRows: widget.regionRows,
+                              regionCols: widget.regionCols,
+                              hasRegionRevealed: (r, c) =>
+                                  _hasRegionRevealed(r, c),
+                              isRegionCompleted: (r, c) =>
+                                  _isRegionCompleted(r, c),
+                              isRegionAccessible: _isRegionAccessible,
+                              isRegionUnknownBiome: (r, c) {
+                                final reg = _regions[(r, c)];
+                                if (reg != null) {
+                                  return reg.biome == BiomeType.unknown &&
+                                      reg.isBiomeRevealed;
+                                }
+                                return false;
+                              },
+                              getRegionBiomeBorderColor: (r, c) {
+                                final reg = _regions[(r, c)];
+                                if (reg != null &&
+                                    reg.isBiomeRevealed &&
+                                    reg.biome != BiomeType.regular) {
+                                  return MinesweeperConfig
+                                      .biomeBorderColor(reg.biome);
+                                }
+                                return null;
+                              },
+                              unlockFadeDuration:
+                                  widget.regionUnlockFadeDuration,
+                              planeOffset: _planeOffset,
+                              strideX: strideX,
+                              strideY: strideY,
+                              isExpanded: _isMinimapExpanded,
+                              onSelectedRegionChanged: (region) {
+                                _extendedSelectedRegion = region;
+                              },
+                              minRegionRow: minRow,
+                              maxRegionRow: maxRow,
+                              minRegionCol: minCol,
+                              maxRegionCol: maxCol,
+                              sizeRatio: minimapSizeRatio,
+                              onTap: () {
+                                if (_isMinimapExpanded) {
+                                  _selectAndCollapseMinimap();
+                                } else {
+                                  setState(() {
+                                    _isMinimapExpanded = true;
+                                    _extendedSelectedRegion = (
+                                      _currentRegionRow,
+                                      _currentRegionCol
+                                    );
+                                    _idlePulseController.stop();
+                                    _idlePulseController.value = 0.0;
+                                    _entryPulseController.stop();
+                                    _entryPulseController.value = 0.0;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
-          if (cntOpt > 0.01)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Center(
-                  child: Opacity(
-                    opacity: cntOpt,
-                    child: _buildContent(theme),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-
-    if (!widget.isInteractable) {
-      // Non-interactable (neighbor cell or board is animating): MUST NOT BE INTERACTABLE!
-      return IgnorePointer(
-        child: tileBox,
-      );
-    }
-
-    final gestures = <Type, GestureRecognizerFactory>{};
-
-    if (widget.onTap != null) {
-      gestures[TapGestureRecognizer] =
-          GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-        () => TapGestureRecognizer(debugOwner: this),
-        (TapGestureRecognizer instance) {
-          instance.onTap = widget.onTap;
+            ],
+          );
         },
-      );
-    }
-
-    if (widget.onLongPress != null) {
-      gestures[LongPressGestureRecognizer] =
-          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-        () => LongPressGestureRecognizer(
-          duration: widget.longTapDuration,
-          debugOwner: this,
-        ),
-        (LongPressGestureRecognizer instance) {
-          instance.onLongPress = () {
-            if (mounted && _isPressed) {
-              setState(() {
-                _isPressed = false;
-                _activePointerId = null;
-                _downPosition = null;
-              });
-            }
-            widget.onLongPress?.call();
-          };
-        },
-      );
-    }
-
-    return Listener(
-      onPointerDown: _onPointerDown,
-      onPointerMove: _onPointerMove,
-      onPointerUp: _onPointerUp,
-      onPointerCancel: _onPointerCancel,
-      child: RawGestureDetector(
-        behavior: HitTestBehavior.opaque,
-        gestures: gestures,
-        child: tileBox,
       ),
-    );
-  }
-
-  Color _backgroundColor(ThemeData theme) {
-    if (widget.gameWon && widget.cellState == CellState.flagged) {
-      return Colors.green.shade700;
-    }
-    if (widget.cellState == CellState.activatedMine ||
-        widget.cellState == CellState.revealedMine) {
-      return Colors.red.shade900;
-    }
-    if (widget.cellState == CellState.revealed ||
-        widget.cellState == CellState.hiddenNumber) {
-      return theme.colorScheme.surface;
-    }
-    return theme.colorScheme.surfaceContainerHighest;
-  }
-
-  Widget? _buildContent(ThemeData theme) {
-    if (widget.cellState == CellState.flagged) {
-      return Icon(
-        Icons.flag_rounded,
-        size: 18,
-        color: widget.gameWon ? Colors.white : Colors.orange.shade400,
-      );
-    }
-
-    if (widget.cellState == CellState.activatedMine ||
-        widget.cellState == CellState.revealedMine) {
-      return const Icon(
-        Icons.brightness_7_rounded,
-        size: 20,
-        color: Colors.black,
-      );
-    }
-
-    if (widget.cellState == CellState.hiddenNumber) {
-      return const _HiddenNumberText();
-    }
-
-    if (widget.cellState == CellState.revealed) {
-      if (widget.adjacentMines == 0) return null;
-      final count = widget.adjacentMines.clamp(0, 8);
-      return Text(
-        '$count',
-        style: _RegionCellWidget._numberTextStyles[count],
-      );
-    }
-
-    return null;
-  }
-}
-
-// ── Anomaly '?' Hidden Number Animated Text ─────────────────────────────────
-
-class _HiddenNumberText extends StatefulWidget {
-  const _HiddenNumberText();
-
-  @override
-  State<_HiddenNumberText> createState() => _HiddenNumberTextState();
-}
-
-class _HiddenNumberTextState extends State<_HiddenNumberText>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<Color?> _colorAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 4),
-    );
-    _colorAnimation = TweenSequence<Color?>([
-      for (int i = 1; i <= 8; i++)
-        TweenSequenceItem(
-          weight: 1.0,
-          tween: ColorTween(
-            begin: _RegionCellWidget._numberColors[i],
-            end: _RegionCellWidget._numberColors[i == 8 ? 1 : i + 1],
-          ),
-        ),
-    ]).animate(_controller);
-    _controller.repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _colorAnimation,
-      builder: (context, child) {
-        return Text(
-          '?',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-            color: _colorAnimation.value,
-          ),
-        );
-      },
     );
   }
 }

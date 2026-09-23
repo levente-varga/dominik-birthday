@@ -1,12 +1,13 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-import '../models/gauntlet_stage.dart';
-import 'speed_typing_config.dart';
-import 'spot_impostor_config.dart';
+import '../constants/colors.dart';
+import '../games/minesweeper/perlin_noise.dart';
+import 'biome_config.dart';
 
 export 'speed_typing_config.dart';
 export 'spot_impostor_config.dart';
+export 'biome_config.dart';
 
 /// Base class for game configurations.
 abstract class BaseGameConfig {
@@ -19,35 +20,6 @@ abstract class BaseGameConfig {
   final IconData icon;
 
   const BaseGameConfig({required this.icon});
-
-  /// Utility helper to retrieve the [IconData] for a given [GauntletStage].
-  static IconData getIconForStage(GauntletStage stage) => switch (stage) {
-    GauntletStage.minesweeper => const MinesweeperConfig().icon,
-    GauntletStage.targetTiming => const TargetTimingConfig().icon,
-    GauntletStage.numberGuesser => const NumberGuesserConfig().icon,
-    GauntletStage.simonSays => const SequenceFlashConfig().icon,
-    GauntletStage.wallRunner => const WallRunnerConfig().icon,
-    GauntletStage.memoryMatch => const MemoryMatchConfig().icon,
-    GauntletStage.targetShooting => const TargetShootingConfig().icon,
-    GauntletStage.memoryMatrix => const MemoryMatrixConfig().icon,
-    GauntletStage.stroopTest => const StroopTestConfig().icon,
-    GauntletStage.mentalMath => const MentalMathConfig().icon,
-    GauntletStage.codeCracker => const CodeCrackerConfig().icon,
-    GauntletStage.bulletHell => const BulletHellConfig().icon,
-    GauntletStage.spotImpostor => const SpotImpostorConfig().icon,
-    GauntletStage.ballBounce => const BallBounceConfig().icon,
-    GauntletStage.speedTyping => const SpeedTypingConfig().icon,
-  };
-
-  /// Utility helper to retrieve the [IconData] for a 1-based stage number.
-  static IconData getIconForStageNumber(int stageNumber) {
-    if (stageNumber >= 1 && stageNumber <= GauntletStage.values.length) {
-      return getIconForStage(
-        GauntletStageExtension.fromStageNumber(stageNumber),
-      );
-    }
-    return Icons.help_outline_rounded;
-  }
 }
 
 class MinesweeperConfig extends BaseGameConfig {
@@ -72,8 +44,8 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Exact number of mines in each region (uniform across all regions)
   static int get minesPerRegion => (cellsPerRegion * mineDensity).round();
 
-  /// Distance metric used for region distance calculations. Defaults to Chebyshev distance.
-  static const RegionDistanceMetric distanceMetric = RegionDistanceMetric.chebyshev;
+  /// Distance metric used for region distance calculations. Defaults to Manhattan distance.
+  static const RegionDistanceMetric distanceMetric = RegionDistanceMetric.manhattan;
 
   /// Calculates the distance of a region at ([r], [c]) from the starting region at ([startR], [startC]).
   static int calculateRegionDistance(
@@ -95,27 +67,157 @@ class MinesweeperConfig extends BaseGameConfig {
     }
   }
 
-  /// The exact function that determines the amount of mines relative to the distance.
+  /// Power exponent applied to noise when generating ranks.
+  /// Higher values make higher ranks exponentially less likely.
+  static const double rankNoisePower = 2.0;
+
+  /// Highest rank possible on the world map, corresponding to noise = 1.0.
+  static const int highestRank = 8;
+
+  /// Scaling factor (wavelength) of the rank Perlin noise.
+  /// Sized so that regions directly adjacent to the starting region are rank 1.
+  static const double rankNoiseScale = 6.0;
+
+  /// Default seed for reproducible Perlin rank noise generation.
+  static const int rankNoiseSeed = 42;
+
+  /// Active 2D Vector Perlin generator for rank noise.
+  static VectorPerlin2D rankNoiseGenerator = VectorPerlin2D(rankNoiseSeed);
+
+  /// Resets or updates the seed for rank noise generation.
+  static void setRankNoiseSeed(int seed) {
+    rankNoiseGenerator = VectorPerlin2D(seed);
+  }
+
+  /// Samples continuous 2D Vector Perlin noise in [0.0, 1.0] for region ([r], [c]).
+  /// Returns 0.0 for the starting region ([startR], [startC]).
+  static double sampleRankNoise(
+    int r,
+    int c, {
+    int startR = initialRegionY,
+    int startC = initialRegionX,
+    double scale = rankNoiseScale,
+    VectorPerlin2D? generator,
+  }) {
+    if (r == startR && c == startC) return 0.0;
+    final gen = generator ?? rankNoiseGenerator;
+    final dr = (r - startR).toDouble() / scale;
+    final dc = (c - startC).toDouble() / scale;
+    return gen.sample(dr, dc);
+  }
+
+  /// Calculates the rank of a region at ([r], [c]) using Perlin noise.
+  /// Rank 0 is guaranteed for the starting region where noise is 0.0.
+  /// Where noise is 1.0, it evaluates to [highestRank].
+  /// The continuous noise is raised to [rankNoisePower] (making higher values less likely),
+  /// scaled to [highestRank], and clamped between 1 and [highestRank] for non-start regions.
+  static int calculateRegionRank(
+    int r,
+    int c, {
+    int startR = initialRegionY,
+    int startC = initialRegionX,
+    RegionDistanceMetric metric = distanceMetric,
+    double? power,
+    int? maxRank,
+    double? scale,
+    VectorPerlin2D? generator,
+  }) {
+    if (r == startR && c == startC) return 0;
+    final p = power ?? rankNoisePower;
+    final maxR = maxRank ?? highestRank;
+    final s = scale ?? rankNoiseScale;
+    final noise = sampleRankNoise(
+      r,
+      c,
+      startR: startR,
+      startC: startC,
+      scale: s,
+      generator: generator,
+    );
+    final vPow = math.pow(noise, p).toDouble();
+    final rawRank = (vPow * maxR).round();
+    return rawRank.clamp(1, maxR);
+  }
+
+  /// Rolls a randomized rank based on Manhattan distance from the starting region.
+  /// With each increasing distance from the start, the chance for a higher rank gets higher.
+  static int rollRankForDistance(int distance, {math.Random? random}) {
+    if (distance <= 0) return 0;
+    final rng = random ?? math.Random();
+    int rank = 0;
+    for (int i = 0; i < distance; i++) {
+      if (rng.nextDouble() < 0.75) {
+        rank++;
+      }
+    }
+    if (rng.nextDouble() < 0.15) {
+      rank++;
+    }
+    return rank;
+  }
+
+  /// Pluggable function to roll a rank based on distance.
+  static int Function(int distance, {math.Random? random})
+      rollRankForDistanceFunction = rollRankForDistance;
+
+  /// Probability of a biome starting in a region of a given [rank] (0.0 to 1.0).
+  /// The higher the rank, the higher the chance of a biome starting in it.
+  static double biomeSpawnChanceForRank(int rank) {
+    if (rank <= 0) return 0.0;
+    return (0.05 + rank * 0.15).clamp(0.0, 0.85);
+  }
+
+  /// Pluggable function to determine biome spawn chance.
+  static double Function(int rank) biomeSpawnChanceForRankFunction =
+      biomeSpawnChanceForRank;
+
+  /// Pluggable function to determine the rank of a region.
+  /// Defaults to [calculateRegionRank].
+  static int Function(
+    int r,
+    int c, {
+    int startR,
+    int startC,
+    RegionDistanceMetric metric,
+  }) rankForRegionFunction = calculateRegionRank;
+
+  /// Returns the rank for a region at ([r], [c]).
+  static int rankForRegion(
+    int r,
+    int c, {
+    int startR = initialRegionY,
+    int startC = initialRegionX,
+    RegionDistanceMetric metric = distanceMetric,
+  }) {
+    return rankForRegionFunction(
+      r,
+      c,
+      startR: startR,
+      startC: startC,
+      metric: metric,
+    );
+  }
+
+  /// Function that determines the amount of mines for a region of a given [rank].
   ///
-  /// Linear implementation: default number of mines (from [minesPerRegion] or [baseMines])
-  /// plus an increased amount equal to its distance from the starting region.
-  static int calculateMinesForDistance(
-    int distance, {
+  /// Linear correlation: base mines (for rank 0) plus an increased amount equal to its rank.
+  static int rankToMineCount(
+    int rank, {
     int? baseMines,
     int? maxMines,
   }) {
     final base = baseMines ?? minesPerRegion;
-    final target = base + distance;
+    final target = base + rank;
     final maxAllowed = maxMines ?? (cellsPerRegion - 1);
     return target.clamp(0, maxAllowed);
   }
 
-  /// Pluggable function that determines the amount of mines relative to distance.
-  /// Defaults to [calculateMinesForDistance].
-  static int Function(int distance, {int? baseMines, int? maxMines})
-      minesForDistanceFunction = calculateMinesForDistance;
+  /// Pluggable function that determines the amount of mines relative to rank.
+  /// Defaults to [rankToMineCount].
+  static int Function(int rank, {int? baseMines, int? maxMines})
+      rankToMineCountFunction = rankToMineCount;
 
-  /// Calculates the number of mines for a region at ([r], [c]) relative to the starting region.
+  /// Calculates the number of mines for a region at ([r], [c]) based on its rank.
   static int minesForRegion(
     int r,
     int c, {
@@ -125,18 +227,35 @@ class MinesweeperConfig extends BaseGameConfig {
     int? maxMines,
     RegionDistanceMetric metric = distanceMetric,
   }) {
-    final distance = calculateRegionDistance(
+    final rank = rankForRegion(
       r,
       c,
       startR: startR,
       startC: startC,
       metric: metric,
     );
-    return minesForDistanceFunction(
-      distance,
+    return rankToMineCountFunction(
+      rank,
       baseMines: baseMines,
       maxMines: maxMines,
     );
+  }
+
+  /// Legacy alias: maps distance to mine count using [rankToMineCount].
+  static int calculateMinesForDistance(
+    int distance, {
+    int? baseMines,
+    int? maxMines,
+  }) =>
+      rankToMineCount(distance, baseMines: baseMines, maxMines: maxMines);
+
+  /// Legacy alias for pluggable distance-to-mine function.
+  static int Function(int distance, {int? baseMines, int? maxMines})
+      get minesForDistanceFunction => rankToMineCountFunction;
+  static set minesForDistanceFunction(
+    int Function(int distance, {int? baseMines, int? maxMines}) fn,
+  ) {
+    rankToMineCountFunction = fn;
   }
 
   /// Total world map dimensions
@@ -156,14 +275,14 @@ class MinesweeperConfig extends BaseGameConfig {
   /// Visual cell styling for region display
   static const double cellSize = 34.0;
   static const double cellGap = 4.0;
-  static const double boardPadding = 2;
+  static const double boardPadding = 1;
 
   /// Gap between adjacent region panels (Option B distinct panel gap)
-  static const double panelGap = 4.0;
+  static const double panelGap = 2.0;
 
-  /// Corner radius of region panels (default 14.0)
-  static const double panelCornerRadius = 14.0;
-  static const double regionPanelCornerRadius = 14.0;
+  /// Corner radius of region panels (default 12.0)
+  static const double panelCornerRadius = 12.0;
+  static const double regionPanelCornerRadius = 12.0;
 
   /// Number of adjacent rows/columns shown from neighboring panels (default 2)
   static const int peekDepth = 2;
@@ -179,6 +298,174 @@ class MinesweeperConfig extends BaseGameConfig {
   static const int minimapCols = 7;
   static const int minimapRows = 7;
 
+  /// Mine field cell styling
+  static const double cellFlagIconSize = 18.0;
+  static const double cellNumberFontSize = 15.0;
+
+  /// Top header control sizing and spacing
+  static const double headerControlTop = 12.0;
+  static const double headerCornerPadding = 12.0;
+  static const double headerButtonSize = 42.0;
+  static const double headerControlHeight = 42.0;
+  static const double headerControlRadius = 9.0;
+  static const double headerControlBorderWidth = 1.0;
+
+  /// Control bar gradient overlay styling (1 cell wide, 40% transparent to 100% transparent)
+  static const double barGradientOverlayNearAlpha = 0.60; // 40% transparent (60% opacity)
+  static const double barGradientOverlayFarAlpha = 0.0; // 100% transparent (0% opacity)
+
+  /// Badge sizing and styling
+  static const double headerBadgeHeight = headerButtonSize;
+  static const double headerBadgeRadius = 9.0;
+  static const double headerBadgeBorderWidth = 1.0;
+  static const double headerBadgeHorizontalPadding = 8.0;
+  static const double headerBadgeGap = 6.0;
+  static const double headerBadgeInnerGap = 5.0;
+
+  /// Mine counter badge styling
+  static const IconData mineCounterIcon = Icons.brightness_7_rounded;
+  static const Color mineCounterIconColor = Colors.red;
+  static const double mineCounterHorizontalPadding = headerBadgeHorizontalPadding;
+  static const double mineCounterIconSize = cellFlagIconSize;
+  static const double mineCounterGap = headerBadgeInnerGap;
+  static const double mineCounterFontSize = cellNumberFontSize;
+
+  /// Rank badge styling
+  static const IconData rankIcon = Icons.military_tech_rounded;
+  static const Color rankIconColor = Color(0xFFFFC107);
+  static const String rankPrefix = '';
+  static const double rankBadgeIconSize = cellFlagIconSize;
+  static const double rankBadgeFontSize = cellNumberFontSize;
+
+  /// Pause / Home button styling
+  static const double pauseButtonIconSize = 21.0;
+  static const double homeButtonIconSize = 24.0;
+
+  /// Minimap sizing and layout
+  static const double minimapCellSlot = 15.0;
+  static const double minimapCellInner = 12.0;
+  static const double minimapCellMargin = 1.5;
+  static const double minimapCellRadius = 2.25;
+  static const double minimapOverlayRadius = 2.25;
+  static const double minimapPadding = 0.0;
+  static const double minimapRadius = 9.0;
+  static const double minimapInnerRadius = 8.0;
+  static const double minimapDotSize = 4.5;
+
+  /// Minimap cell background colors
+  static const Color minimapFinishedColor = AppColors.amberMedium; // pale gold for finished regions
+  static const Color minimapStartedColor = AppColors.blueMedium; // pale blue for started regions
+  static const Color minimapDiscoveredColor = AppColors.panelHigh;
+
+  /// Correctly placed flag styling on loss
+  static const Color correctFlagLossBackgroundColor = Color(0xFFFFC107);
+  static const Color correctFlagLossIconColor = Colors.black;
+
+  /// Biome styling & configuration
+  static const Color unknownBiomeBorderColor = Color(0xFFEF5350); // Lighter red (Material Red 400)
+  static const Color randomBiomeBorderColor = Color(0xFFAB47BC); // Purple
+  static const Color diagonalBiomeBorderColor = Color(0xFF00BCD4); // Cyan
+  static const Color orthogonalBiomeBorderColor = Color(0xFFFFA726); // Amber/Orange
+  static const Color rangeBiomeBorderColor = Color(0xFF66BB6A); // Green
+
+  static Color? biomeBorderColor(BiomeType biome) {
+    switch (biome) {
+      case BiomeType.unknown:
+        return unknownBiomeBorderColor;
+      case BiomeType.random:
+        return randomBiomeBorderColor;
+      case BiomeType.diagonal:
+        return diagonalBiomeBorderColor;
+      case BiomeType.orthogonal:
+        return orthogonalBiomeBorderColor;
+      case BiomeType.range:
+        return rangeBiomeBorderColor;
+      case BiomeType.regular:
+        return null;
+    }
+  }
+
+  static const double unknownBiomeBorderWidth = 1.5;
+  static const double unknownBiomeMinimapBorderWidth = 1.0;
+  static const int unknownBiomeHiddenCellCount = 2;
+
+  /// Region panel styling & selection highlighting
+  /// Base background color for special biome region panels (default #16141A)
+  static const Color regionPanelBaseColor = Color(0xFF16141A);
+
+  /// Background color for regular / basic region panels (original AppColors.panelMedium = #201E24)
+  static const Color regularRegionPanelBackgroundColor = AppColors.panelMedium;
+
+  /// Gentle tint alpha for region background panel matching border/biome color (default 8%)
+  static const double regionPanelTintAlpha = 0.08;
+
+  /// Gentler tint alpha for unrevealed cells matching border/biome color (default 5.0%)
+  static const double unrevealedCellTintAlpha = 0.050;
+
+  /// First iteration peak border color for selected regular region on entry pulse (first iteration level, 60% alpha)
+  static const Color firstIterationRegularBorderColor = Color(0x99C7C1CA);
+
+  /// Idle breathing pulse peak border color for selected regular region (subtle, ~25% alpha)
+  static const Color idlePulseRegularBorderColor = Color(0x40C7C1CA);
+
+  /// Non-selected / baseline region regular border color (dim outline, 10% alpha)
+  static const Color nonSelectedRegularBorderColor = Color(0x1A9E9E9E);
+
+  /// Opacity multiplier for border of selected special biome on entry pulse (first iteration level, 100%)
+  static const double firstIterationBiomeBorderAlpha = 1.0;
+
+  /// Opacity multiplier for border of selected special biome during idle breathing pulse (subtle, 55%)
+  static const double idlePulseBiomeBorderAlpha = 0.55;
+
+  /// Opacity multiplier / alpha for borders of non-selected / baseline special biome regions (default 40%)
+  static const double nonSelectedBiomeBorderAlpha = 0.40;
+
+  /// Duration for single entry pulse (ease-out in + ease-out out)
+  static const Duration borderEntryPulseDuration = Duration(milliseconds: 650);
+
+  /// Half-cycle duration for slow idle breathing border pulse
+  static const Duration borderIdlePulseDuration = Duration(milliseconds: 1800);
+
+  /// Whether continuous idle border pulsing is enabled
+  static const bool enableContinuousIdlePulse = true;
+
+  /// Whether continuous idle border pulsing should repeat indefinitely in test environments
+  static const bool enableContinuousIdlePulseInTests = false;
+
+  /// Selected region regular border color (alias for backward compatibility)
+  static const Color selectedRegularBorderColor = firstIterationRegularBorderColor;
+
+  /// Opacity multiplier for selected special biome border (alias for backward compatibility)
+  static const double selectedBiomeBorderAlpha = firstIterationBiomeBorderAlpha;
+
+  static const int randomBiomeMinOffset = 1;
+  static const int randomBiomeMaxOffset = 3;
+
+  /// Computes the outer corner radius for the minimap, scaled when expanded by sizeRatio
+  static double minimapCornerRadius({required bool isExpanded, double sizeRatio = 1.0}) {
+    if (!isExpanded) return minimapRadius;
+    return minimapRadius * sizeRatio;
+  }
+
+  /// Computes the inner clip corner radius for the minimap, scaled when expanded by sizeRatio
+  static double minimapInnerCornerRadius({required bool isExpanded, double sizeRatio = 1.0}) {
+    if (!isExpanded) return minimapInnerRadius;
+    return minimapInnerRadius * sizeRatio;
+  }
+
+  /// Unified padding around the minimap when expanded
+  static const double minimapExpandedPadding = 16.0;
+
+  /// Duration for minimap expand and collapse animation
+  static const Duration minimapExpandDuration = Duration(milliseconds: 300);
+
+  /// Curve for minimap expand and collapse animation
+  static const Curve minimapExpandCurve = Curves.easeOutCirc;
+
+  /// Duration and curve for minimap selected region jumping to center during drag
+  static const Duration minimapJumpDuration = Duration(milliseconds: 180);
+  static const Curve minimapJumpCurve = Curves.easeOut;
+
   /// Duration for candidate region fade-in and fade-out cross-fade transitions
   static const Duration candidateFadeDuration = Duration(milliseconds: 200);
 
@@ -193,7 +480,7 @@ class MinesweeperConfig extends BaseGameConfig {
   static const double gradientFarTransparency = 0.0;
 
   /// Transparency for neighbor region panels (0.50 = 50% faded)
-  static const double neighborRegionTransparency = 0.50;
+  static const double neighborRegionTransparency = 0.3;
 
   /// Constant overlay transparency applied to the rest of the incoming panel (non-edge cells)
   static const double incomingPanelOverlayTransparency = 0.20;
@@ -245,6 +532,8 @@ enum OverlayGradientStyle {
   /// Radial gradient from the center with the active region clipped out.
   radial,
 }
+
+
 
 // ── Legacy Stage Configs (Preserved for Skill Tree & Stage metadata references) ──
 

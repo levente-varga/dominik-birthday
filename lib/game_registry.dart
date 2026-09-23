@@ -1,4 +1,3 @@
-import 'game.dart';
 import 'games/minesweeper.dart';
 
 /// Central registry of all gauntlet stages.
@@ -6,12 +5,12 @@ import 'games/minesweeper.dart';
 class GameRegistry {
   GameRegistry._();
 
-  static final List<Game> stages = [
+  static final List<MinesweeperGame> stages = [
     MinesweeperGame(), // Stage 1
   ];
 
   /// Get the game for a 1-based [stageNumber].
-  static Game getStage(int stageNumber) {
+  static MinesweeperGame getStage(int stageNumber) {
     return stages[0];
   }
 
