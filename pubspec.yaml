@@ -36,7 +36,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.3.0
   crypto: ^3.0.7
-  window_manager: ^0.4.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

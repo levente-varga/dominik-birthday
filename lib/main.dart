@@ -1,8 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:window_manager/window_manager.dart';
 
 import 'game_state.dart';
 import 'save_system.dart';
@@ -16,28 +12,6 @@ import 'widgets/global_achievement_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialise desktop window manager
-  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-    await windowManager.ensureInitialized();
-    const minWindowSize = Size(560, 680);
-    const windowOptions = WindowOptions(
-      size: minWindowSize,
-      minimumSize: minWindowSize,
-      center: true,
-      title: 'Dominik',
-    );
-    windowManager.waitUntilReadyToShow(
-      windowOptions,
-      () async {
-        await windowManager.setMinimumSize(minWindowSize);
-        await windowManager.setSize(minWindowSize);
-        await windowManager.setTitle('Dominik');
-        await windowManager.show();
-        await windowManager.focus();
-      },
-    );
-  }
 
   // Initialise persistence layer.
   final saveSystem = SaveSystem();
@@ -54,13 +28,6 @@ class BirthdayGauntletApp extends StatelessWidget {
   final GameStateManager gameState;
 
   const BirthdayGauntletApp({super.key, required this.gameState});
-
-  Future<void> _toggleFullscreen() async {
-    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      final isFull = await windowManager.isFullScreen();
-      await windowManager.setFullScreen(!isFull);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,23 +50,11 @@ class BirthdayGauntletApp extends StatelessWidget {
         useMaterial3: true,
       ),
       builder: (context, child) {
-        return CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.f11): _toggleFullscreen,
-            const SingleActivator(LogicalKeyboardKey.enter, alt: true):
-                _toggleFullscreen,
-            const SingleActivator(
-              LogicalKeyboardKey.keyF,
-              meta: true,
-              control: true,
-            ): _toggleFullscreen,
-          },
-          child: ColoredBox(
-            color: Theme.of(context).colorScheme.surface,
-            child: GlobalAchievementOverlay(
-              gameState: gameState,
-              child: child ?? const SizedBox.shrink(),
-            ),
+        return ColoredBox(
+          color: Theme.of(context).colorScheme.surface,
+          child: GlobalAchievementOverlay(
+            gameState: gameState,
+            child: child ?? const SizedBox.shrink(),
           ),
         );
       },
