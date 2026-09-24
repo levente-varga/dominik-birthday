@@ -328,14 +328,20 @@ class GameStateManager extends ChangeNotifier {
   bool get hasEncounteredAnyAnomaly =>
       statistics.encounteredAnomalies.values.any((v) => v == true);
 
-  /// Dev helper: add custom amount of tokens to balance and update statistics.
-  void addDevTokens(int amount) {
+  /// Award tokens to the player balance and update lifetime statistics.
+  void addTokens(int amount) {
     if (amount <= 0) return;
     tokens += amount;
     statistics.totalTokensEarned += amount;
+    _saveSystem.saveTokens(tokens);
     _saveSystem.saveStatistics(statistics);
     checkTokenAchievements();
     notifyListeners();
+  }
+
+  /// Dev helper: add custom amount of tokens to balance and update statistics.
+  void addDevTokens(int amount) {
+    addTokens(amount);
   }
 
   /// Dev helper: add 100 tokens to balance.

@@ -246,7 +246,7 @@ void main() {
       expect(region.cellStates[region.localIndex(2, 3)], equals(CellState.revealed));
     });
 
-    testWidgets('Passive Shield: chording into 2+ mines is NOT prevented; causes game over', (tester) async {
+    testWidgets('Passive Shield: chording into 2 mines with 1 shield defuses 1 mine but remaining causes game over', (tester) async {
       tester.view.physicalSize = const Size(800, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -310,10 +310,93 @@ void main() {
       state.handleCellTap(2, 2, 2, 2);
       await tester.pumpAndSettle();
 
-      // Shield is not enough to defend against 2+ mines revealed at once!
+      // 1 shield defuses 1 mine, but the 2nd undefended mine causes game over!
       expect(failed, isTrue);
-      expect(region.cellStates[region.localIndex(1, 2)], equals(CellState.activatedMine));
+      expect(region.cellStates[region.localIndex(1, 2)], equals(CellState.flagged));
       expect(region.cellStates[region.localIndex(1, 3)], equals(CellState.activatedMine));
+      expect(state.hasShield, isFalse);
+      expect(state.inventory[0], isNull);
+    });
+
+    testWidgets('Passive Shield: chording into 2 mines with 2 shields defuses BOTH mines and prevents game over', (tester) async {
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      bool failed = false;
+      final game = MinesweeperGame(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        isInfiniteWorld: false,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => game.buildGame(
+                context: context,
+                onComplete: () {},
+                onFail: () {
+                  failed = true;
+                },
+                gameState: gameState,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final dynamic state = tester.state(
+        find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+      );
+      final Map<(int, int), dynamic> regions = state.regions;
+      final region = regions[(2, 2)];
+      state.ensureRegionGenerated(2, 2);
+      state.minesPlaced = true;
+
+      // Give player 2 shields
+      state.setInventorySlot(0, InventoryItemType.shield);
+      state.setInventorySlot(1, InventoryItemType.shield);
+
+      // Clear mines in region and reset cell states around (2, 2)
+      region.mines.fillRange(0, region.mines.length, 0);
+      region.adjacent.fillRange(0, region.adjacent.length, 255);
+      region.cellStates.fillRange(0, region.cellStates.length, CellState.unrevealed);
+
+      // Place 2 actual mines around (2, 2): (1, 2) and (1, 3)
+      region.mines[region.localIndex(1, 2)] = 1;
+      region.mines[region.localIndex(1, 3)] = 1;
+
+      // Cell (2, 2) sees 2 mines
+      state.reveal(2, 2, 2, 2);
+      await tester.pumpAndSettle();
+
+      // Player falsely flags two safe neighbors (2, 1) and (2, 3)
+      state.toggleFlag(2, 2, 2, 1);
+      state.toggleFlag(2, 2, 2, 3);
+      await tester.pumpAndSettle();
+
+      // Chording cell (2, 2) attempts to reveal all remaining unflagged neighbors,
+      // which includes BOTH mines: (1, 2) and (1, 3) simultaneously!
+      state.handleCellTap(2, 2, 2, 2);
+      await tester.pumpAndSettle();
+
+      // 2 shields defuse BOTH mines! Game does not fail
+      expect(failed, isFalse);
+      expect(region.cellStates[region.localIndex(1, 2)], equals(CellState.flagged));
+      expect(region.cellStates[region.localIndex(1, 3)], equals(CellState.flagged));
+      expect(state.hasShield, isFalse);
+      expect(state.inventory[0], isNull);
+      expect(state.inventory[1], isNull);
+
+      // And safe neighbors were revealed
+      expect(region.cellStates[region.localIndex(1, 1)], equals(CellState.revealed));
+      expect(region.cellStates[region.localIndex(3, 1)], equals(CellState.revealed));
     });
 
     testWidgets('Active Flag Obvious Mines: flags obvious mines on board and breaks upon use', (tester) async {

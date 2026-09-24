@@ -9,21 +9,28 @@ import '../config/achievement_config.dart';
 import '../config/config.dart';
 import '../constants/colors.dart';
 import '../game_state.dart';
+import '../widgets/chest_reward_popup.dart';
 import '../widgets/options_popup.dart';
 import '../widgets/shockwave_layer.dart';
 import 'minesweeper/cell_state.dart';
+import 'minesweeper/chest_reward.dart';
+import 'minesweeper/flying_item_overlay.dart';
 import 'minesweeper/inventory.dart';
 import 'minesweeper/minimap_selector.dart';
 import 'minesweeper/region_badges.dart';
 import 'minesweeper/region_data.dart';
+import 'minesweeper/region_sparkles.dart';
 import 'minesweeper/world_generator.dart';
 
 export 'minesweeper/cell_state.dart';
+export 'minesweeper/chest_reward.dart';
+export 'minesweeper/flying_item_overlay.dart';
 export 'minesweeper/gradient_painter.dart';
 export 'minesweeper/inventory.dart';
 export 'minesweeper/minimap_selector.dart';
 export 'minesweeper/region_badges.dart';
 export 'minesweeper/region_data.dart';
+export 'minesweeper/region_sparkles.dart';
 export 'minesweeper/world_generator.dart';
 
 part 'minesweeper/region_cell_widget.dart';
@@ -92,10 +99,12 @@ class MinesweeperGame {
     this.worldGenerator,
     this.random,
     this.enableContinuousIdlePulseInTests,
+    this.enableContinuousSparklesInTests,
     this.initialInventory,
   });
 
   final bool? enableContinuousIdlePulseInTests;
+  final bool? enableContinuousSparklesInTests;
 
   Widget buildGame({
     required BuildContext context,
@@ -148,6 +157,7 @@ class MinesweeperGame {
           MinesweeperConfig.regionUnlockFadeDuration,
       isInfiniteWorld: isInfiniteWorld ?? MinesweeperConfig.isInfiniteWorld,
       enableContinuousIdlePulseInTests: enableContinuousIdlePulseInTests,
+      enableContinuousSparklesInTests: enableContinuousSparklesInTests,
       onPause: onPause,
       worldGenerator: worldGenerator,
       random: random,
@@ -188,6 +198,7 @@ class _MinesweeperGame extends StatefulWidget {
   final Duration regionUnlockFadeDuration;
   final bool isInfiniteWorld;
   final bool? enableContinuousIdlePulseInTests;
+  final bool? enableContinuousSparklesInTests;
   final VoidCallback? onPause;
   final MinesweeperWorldGenerator? worldGenerator;
   final Random? random;
@@ -224,6 +235,7 @@ class _MinesweeperGame extends StatefulWidget {
     this.regionUnlockFadeDuration = MinesweeperConfig.regionUnlockFadeDuration,
     this.isInfiniteWorld = MinesweeperConfig.isInfiniteWorld,
     this.enableContinuousIdlePulseInTests,
+    this.enableContinuousSparklesInTests,
     this.onPause,
     this.worldGenerator,
     this.random,
@@ -265,9 +277,76 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   void toggleFlag(int r, int c, int lr, int lc) => _toggleFlag(r, c, lr, lc);
 
   late List<InventoryItemType?> _inventory;
+  final List<GlobalKey> _inventorySlotKeys = [GlobalKey(), GlobalKey()];
+  final List<ActiveItemFlightData> _activeItemFlights = [];
+  final Set<int> _reservedInventorySlots = {};
 
   @visibleForTesting
   List<InventoryItemType?> get inventory => List.unmodifiable(_inventory);
+
+  @visibleForTesting
+  List<ActiveItemFlightData> get activeItemFlights =>
+      List.unmodifiable(_activeItemFlights);
+
+  @visibleForTesting
+  void setInventorySlot(int slotIndex, InventoryItemType? item) {
+    if (slotIndex >= 0 && slotIndex < _inventory.length) {
+      _inventory[slotIndex] = item;
+      setState(() {});
+    }
+  }
+
+  @visibleForTesting
+  void setRegionItem(
+    int r,
+    int c,
+    InventoryItemType itemType,
+    int cellIndex,
+  ) {
+    final region = _getOrInitRegion(r, c);
+    region.hasChest = true;
+    region.itemType = itemType;
+    region.chestCellIndex = cellIndex;
+    region.chestOpened = false;
+    region.sparkleParticles = null;
+    setState(() {});
+  }
+
+  @visibleForTesting
+  void setRegionChest(int r, int c, int cellIndex) {
+    final region = _getOrInitRegion(r, c);
+    region.hasChest = true;
+    region.chestCellIndex = cellIndex;
+    region.chestOpened = false;
+    region.sparkleParticles = null;
+    setState(() {});
+  }
+
+  @visibleForTesting
+  void openChest(int r, int c, {ChestRewardOption? optionToPick}) {
+    final region = _getOrInitRegion(r, c);
+    if (!region.hasChest || region.chestOpened || region.chestCellIndex == null) return;
+    final cellIndex = region.chestCellIndex!;
+    region.chestOpened = true;
+    region.sparkleParticles = null;
+    final chosen = optionToPick ??
+        ChestRewardOption.generateTwoUniqueOptions(
+          _rng,
+          currentRegion: (r, c),
+          rank: region.rank,
+        ).first;
+    _applyChestReward(chosen, region, cellIndex);
+    setState(() {});
+  }
+
+  @visibleForTesting
+  Set<(int, int)> get questRegions => _questRegions;
+
+  @visibleForTesting
+  Set<(int, int)> get hintRegions => _hintRegions;
+
+  @visibleForTesting
+  int get activeBoonRankBonus => _activeBoonRankBonus;
 
   @visibleForTesting
   bool get hasShield => _inventory.contains(InventoryItemType.shield);
@@ -295,6 +374,10 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   bool _isMinimapExpanded = false;
   double _currentScale = 1.0;
   (int, int)? _extendedSelectedRegion;
+  final Set<(int, int)> _questRegions = {};
+  final Set<(int, int)> _hintRegions = {};
+  int _activeBoonRankBonus = 0;
+  Random get _rng => widget.random ?? Random();
 
   int _revealedCount = 0;
   int _flagCount = 0;
@@ -668,16 +751,29 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   RegionData _getOrInitRegion(int r, int c) {
     return _regions.putIfAbsent(
       (r, c),
-      () => RegionData(
-        r: r,
-        c: c,
-        rows: widget.regionRows,
-        cols: widget.regionCols,
-        isStartingRegion:
-            (r == widget.initialRegionY && c == widget.initialRegionX),
-        rank: _worldGenerator.getOrGenerateRank(r, c),
-        biome: _worldGenerator.getOrGenerateBiome(r, c),
-      ),
+      () {
+        final baseRank = _worldGenerator.getOrGenerateRank(r, c);
+        final rank = baseRank + _activeBoonRankBonus;
+        final biome = _worldGenerator.getOrGenerateBiome(r, c);
+        final isStarting =
+            (r == widget.initialRegionY && c == widget.initialRegionX);
+        final rng = widget.random ?? Random();
+        final chestChance = isStarting
+            ? 0.0
+            : MinesweeperConfig.itemSpawnChanceForRankFunction(rank);
+        final hasChest = rng.nextDouble() < chestChance;
+
+        return RegionData(
+          r: r,
+          c: c,
+          rows: widget.regionRows,
+          cols: widget.regionCols,
+          isStartingRegion: isStarting,
+          rank: rank,
+          biome: biome,
+          hasChest: hasChest,
+        );
+      },
     );
   }
 
@@ -731,6 +827,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       case BiomeType.regular:
       case BiomeType.unknown:
       case BiomeType.random:
+      case BiomeType.blind:
         return const [
           (-1, -1), (-1, 0), (-1, 1),
           (0, -1),           (0, 1),
@@ -775,6 +872,41 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       region.mines[idx] = 1;
     }
     region.mineCount = targetMines;
+
+    if (region.hasChest && region.chestCellIndex == null) {
+      final safeIndices = <int>[];
+      final weights = <double>[];
+      double totalWeight = 0.0;
+      for (int i = 0; i < totalCells; i++) {
+        if (region.mines[i] == 0) {
+          safeIndices.add(i);
+          final lr = i ~/ region.cols;
+          final lc = i % region.cols;
+          final w = MinesweeperConfig.centerWeightedCellScore(
+            lr,
+            lc,
+            region.rows,
+            region.cols,
+          );
+          weights.add(w);
+          totalWeight += w;
+        }
+      }
+
+      if (safeIndices.isNotEmpty) {
+        final roll = rng.nextDouble() * totalWeight;
+        double cumulative = 0.0;
+        int chosen = safeIndices.first;
+        for (int j = 0; j < safeIndices.length; j++) {
+          cumulative += weights[j];
+          if (roll <= cumulative) {
+            chosen = safeIndices[j];
+            break;
+          }
+        }
+        region.chestCellIndex = chosen;
+      }
+    }
 
     if (region.biome == BiomeType.unknown) {
       final safeNumberedCandidates = <int>[];
@@ -1254,6 +1386,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     region.revealedCount++;
     _revealedCount++;
     newlyRevealed?.add(startIdx);
+    _checkItemDiscovery(region, startIdx);
 
     int head = 0;
     while (head < queue.length) {
@@ -1277,6 +1410,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
               region.revealedCount++;
               _revealedCount++;
               newlyRevealed?.add(nIdx);
+              _checkItemDiscovery(region, nIdx);
               if (!isHidden) {
                 queue.add(nIdx);
               }
@@ -1284,6 +1418,115 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
           }
         }
       }
+    }
+  }
+
+  void _checkItemDiscovery(RegionData region, int cellIndex) {
+    // Chests remain on the cell until clicked/tapped by the player to be opened.
+  }
+
+  void _openChest(RegionData region, int cellIndex) {
+    if (!region.hasChest || region.chestOpened) return;
+
+    HapticFeedback.heavyImpact();
+    setState(() {
+      region.chestOpened = true;
+      region.sparkleParticles = null;
+    });
+
+    final options = ChestRewardOption.generateTwoUniqueOptions(
+      _rng,
+      currentRegion: (region.r, region.c),
+      rank: region.rank,
+    );
+
+    showChestRewardPopup(
+      context,
+      options: options,
+      onSelected: (chosen) {
+        _applyChestReward(chosen, region, cellIndex);
+      },
+    );
+  }
+
+  void _applyChestReward(
+    ChestRewardOption chosen,
+    RegionData region,
+    int cellIndex,
+  ) {
+    switch (chosen.type) {
+      case ChestRewardType.item:
+        final item = chosen.itemType ?? InventoryItemType.shield;
+        _grantItemToInventory(item, region, cellIndex);
+        break;
+      case ChestRewardType.money:
+        final amount = chosen.tokenAmount ?? 20;
+        widget.gameState.addTokens(amount);
+        break;
+      case ChestRewardType.quest:
+        if (chosen.targetRegion != null) {
+          setState(() {
+            _questRegions.add(chosen.targetRegion!);
+          });
+        }
+        break;
+      case ChestRewardType.hint:
+        if (chosen.targetRegion != null) {
+          setState(() {
+            _hintRegions.add(chosen.targetRegion!);
+          });
+        }
+        break;
+      case ChestRewardType.boon:
+        setState(() {
+          _activeBoonRankBonus += 1;
+        });
+        break;
+      case ChestRewardType.roll:
+        _performRollReward(region, cellIndex);
+        break;
+    }
+  }
+
+  void _grantItemToInventory(
+    InventoryItemType itemType,
+    RegionData region,
+    int cellIndex,
+  ) {
+    int? targetSlot;
+    for (int s = 0; s < _inventory.length; s++) {
+      if (_inventory[s] == null && !_reservedInventorySlots.contains(s)) {
+        targetSlot = s;
+        _reservedInventorySlots.add(s);
+        break;
+      }
+    }
+
+    final lr = cellIndex ~/ region.cols;
+    final lc = cellIndex % region.cols;
+
+    final flight = ActiveItemFlightData(
+      id: UniqueKey(),
+      itemType: itemType,
+      regionR: region.r,
+      regionC: region.c,
+      localR: lr,
+      localC: lc,
+      targetSlot: targetSlot,
+    );
+
+    setState(() {
+      _activeItemFlights.add(flight);
+    });
+  }
+
+  void _performRollReward(RegionData region, int cellIndex) {
+    final int roll = 1 + _rng.nextInt(6);
+    if (roll == 6) {
+      widget.gameState.addTokens(50);
+      _grantItemToInventory(InventoryItemType.shield, region, cellIndex);
+    } else {
+      widget.gameState.addTokens(roll * 10);
     }
   }
 
@@ -1338,8 +1581,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       return;
     }
 
-    final adjCount = _getAdjacentMines(regionR, regionC, localRow, localCol);
-    if (adjCount == 0) return;
+    _getAdjacentMines(regionR, regionC, localRow, localCol);
+    final targetCount = region.getDisplayedNumber(idx);
+    if (targetCount == 0) return;
 
     int flaggedCount = 0;
     final unflaggedNeighbors = <(int, int, int, int)>[];
@@ -1368,7 +1612,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
     }
 
-    if (flaggedCount != adjCount || unflaggedNeighbors.isEmpty) {
+    if (flaggedCount != targetCount || unflaggedNeighbors.isEmpty) {
       return;
     }
 
@@ -1390,56 +1634,17 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       }
     }
 
-    if (hitMines.isEmpty) {
-      setState(() {
-        for (final (tRegR, tRegC, tLocR, tLocC) in safeNeighbors) {
-          final targetRegion = _getOrInitRegion(tRegR, tRegC);
-          final newlyRevealed = <int>[];
-          _floodReveal(targetRegion, tLocR, tLocC, newlyRevealed);
+    final shieldCount =
+        _inventory.where((item) => item == InventoryItemType.shield).length;
+    final defusedCount = min(hitMines.length, shieldCount);
 
-          if (widget.gameState.isCurrentGameAnomaly &&
-              !_gameOver &&
-              !_gameWon) {
-            bool revealedZero = newlyRevealed.any((i) =>
-                _getAdjacentMines(
-                  targetRegion.r,
-                  targetRegion.c,
-                  i ~/ targetRegion.cols,
-                  i % targetRegion.cols,
-                ) == 0);
-            if (revealedZero) {
-              final candidates = newlyRevealed
-                  .where((i) {
-                    final r = i ~/ targetRegion.cols;
-                    final c = i % targetRegion.cols;
-                    return _getAdjacentMines(
-                              targetRegion.r,
-                              targetRegion.c,
-                              r,
-                              c,
-                            ) > 0 &&
-                        r > 0 &&
-                        r < targetRegion.rows - 1 &&
-                        c > 0 &&
-                        c < targetRegion.cols - 1;
-                  })
-                  .toList();
-              if (candidates.isNotEmpty) {
-                final chosen =
-                    candidates[Random().nextInt(candidates.length)];
-                targetRegion.cellStates[chosen] = CellState.hiddenNumber;
-              }
-            }
-          }
-        }
-
-        _checkWin();
-        _checkNewlyUnlockedRegions();
-      });
-    } else if (hitMines.length == 1 && hasShield) {
+    for (int i = 0; i < defusedCount; i++) {
       _breakItem(InventoryItemType.shield);
-      setState(() {
-        final (mRegR, mRegC, mLocR, mLocC) = hitMines.first;
+    }
+
+    setState(() {
+      for (int i = 0; i < defusedCount; i++) {
+        final (mRegR, mRegC, mLocR, mLocC) = hitMines[i];
         final mRegion = _getOrInitRegion(mRegR, mRegC);
         final mIdx = mRegion.localIndex(mLocR, mLocC);
         mRegion.cellStates[mIdx] = CellState.flagged;
@@ -1447,7 +1652,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _flagCount++;
         _totalFlagsPlacedInSession++;
         _correctlyFlaggedMines++;
+      }
 
+      if (defusedCount == hitMines.length) {
         for (final (tRegR, tRegC, tLocR, tLocC) in safeNeighbors) {
           final targetRegion = _getOrInitRegion(tRegR, tRegC);
           final newlyRevealed = <int>[];
@@ -1491,10 +1698,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
         _checkWin();
         _checkNewlyUnlockedRegions();
-      });
-    } else {
-      setState(() {
-        for (final (tRegR, tRegC, tLocR, tLocC) in hitMines) {
+      } else {
+        for (int i = defusedCount; i < hitMines.length; i++) {
+          final (tRegR, tRegC, tLocR, tLocC) = hitMines[i];
           final targetRegion = _getOrInitRegion(tRegR, tRegC);
           final nIdx = targetRegion.localIndex(tLocR, tLocC);
           targetRegion.cellStates[nIdx] = CellState.activatedMine;
@@ -1507,8 +1713,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         _gameOver = true;
         _revealAllMines();
         if (mounted) widget.onFail();
-      });
-    }
+      }
+    });
   }
 
   void _revealAllMines() {
@@ -1920,6 +2126,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
       setState(() {
         _currentRegionRow = targetRow;
         _currentRegionCol = targetCol;
+        if (_questRegions.remove((targetRow, targetCol))) {
+          widget.gameState.addTokens(50);
+        }
         if (!_unlockedRegions.contains((targetRow, targetCol))) {
           _unlockedRegions.add((targetRow, targetCol));
         }
@@ -1964,6 +2173,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         if (_isRegionAccessible(targetRow, targetCol)) {
           _currentRegionRow = targetRow;
           _currentRegionCol = targetCol;
+          if (_questRegions.remove((targetRow, targetCol))) {
+            widget.gameState.addTokens(50);
+          }
           if (!_unlockedRegions.contains((targetRow, targetCol))) {
             _unlockedRegions.add((targetRow, targetCol));
           }
@@ -2014,10 +2226,20 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     final idx = region.localIndex(localRow, localCol);
     final state = region.cellStates[idx];
 
+    // If the cell is revealed and has an unopened chest, opening the chest takes precedence!
+    if (region.hasChest &&
+        !region.chestOpened &&
+        region.chestCellIndex == idx &&
+        (state == CellState.revealed || state == CellState.hiddenNumber)) {
+      _openChest(region, idx);
+      return;
+    }
+
     if (state == CellState.unrevealed) {
       _reveal(targetRegionRow, targetRegionCol, localRow, localCol);
     } else if (state == CellState.revealed &&
-        _getAdjacentMines(targetRegionRow, targetRegionCol, localRow, localCol) > 0) {
+        (_getAdjacentMines(targetRegionRow, targetRegionCol, localRow, localCol) > 0 ||
+            region.getDisplayedNumber(idx) > 0)) {
       _chord(targetRegionRow, targetRegionCol, localRow, localCol);
     }
   }
@@ -2094,6 +2316,8 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
         backgroundOpacity: 1.0,
         contentOpacity: 1.0,
         biomeColor: biomeColor,
+        hasChest: region.hasChest && region.chestCellIndex == idx,
+        isChestOpened: region.chestOpened,
         onTap: isInteractable ? () => _handleCellTap(regionRow, regionCol, r, c) : null,
         onLongPress: isInteractable ? () => _handleCellLongPress(regionRow, regionCol, r, c) : null,
         longTapDuration: widget.longTapDuration,
@@ -2310,6 +2534,62 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
             child: IgnorePointer(
               child: ShockwaveLayer(
                 controller: _shockwaveLayerController,
+              ),
+            ),
+          ),
+
+        // 4. Sparkles Layer (Regions containing unopened chests)
+        if (targetRegion.hasItem)
+          Positioned(
+            left: 0,
+            top: 0,
+            width: panelWidth,
+            height: panelHeight,
+            child: IgnorePointer(
+              child: RegionSparklesWidget(
+                key: ValueKey('region_sparkles_${regionRow}_$regionCol'),
+                width: panelWidth,
+                height: panelHeight,
+                active: targetRegion.hasItem,
+                enableContinuousInTests:
+                    widget.enableContinuousSparklesInTests,
+                particles: targetRegion.sparkleParticles,
+                onParticlesCreated: (particles) {
+                  targetRegion.sparkleParticles = particles;
+                },
+              ),
+            ),
+          ),
+
+        // 5. Quest Marker Layer ('!')
+        if (_questRegions.contains((regionRow, regionCol)))
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IgnorePointer(
+              child: Container(
+                key: ValueKey('region_quest_marker_${regionRow}_$regionCol'),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade900.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amberAccent, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.amber.withValues(alpha: 0.6),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Text(
+                  '!',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.amberAccent,
+                  ),
+                ),
               ),
             ),
           ),
@@ -2705,8 +2985,13 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     isVertical: isHorizontal,
                   );
 
+                  final isBlindBiome =
+                      _getOrInitRegion(_currentRegionRow, _currentRegionCol).biome ==
+                          BiomeType.blind;
+
                   final mineCounterBadge = RegionMineCounterBadge(
-                    remainingMines: _currentRegionRemainingMines,
+                    remainingMines:
+                        isBlindBiome ? null : _currentRegionRemainingMines,
                     isVertical: isHorizontal,
                   );
 
@@ -2743,14 +3028,14 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                     children: [
                       InventorySlotButton(
                         key: const ValueKey('bottom_bar_left_button'),
-                        slotKey: const ValueKey('inventory_slot_0'),
+                        slotKey: _inventorySlotKeys[0],
                         itemType: _inventory.isNotEmpty ? _inventory[0] : null,
                         onTap: () => _useInventorySlot(0),
                       ),
                       const SizedBox(width: 8.0),
                       InventorySlotButton(
                         key: const ValueKey('bottom_bar_right_button'),
-                        slotKey: const ValueKey('inventory_slot_1'),
+                        slotKey: _inventorySlotKeys[1],
                         itemType: _inventory.length > 1 ? _inventory[1] : null,
                         onTap: () => _useInventorySlot(1),
                       ),
@@ -3050,7 +3335,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                                     const Spacer(),
                                     InventorySlotButton(
                                       key: const ValueKey('bottom_bar_top_button'),
-                                      slotKey: const ValueKey('inventory_slot_0'),
+                                      slotKey: _inventorySlotKeys[0],
                                       itemType: _inventory.isNotEmpty
                                           ? _inventory[0]
                                           : null,
@@ -3060,7 +3345,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                                     InventorySlotButton(
                                       key: const ValueKey(
                                           'bottom_bar_bottom_button'),
-                                      slotKey: const ValueKey('inventory_slot_1'),
+                                      slotKey: _inventorySlotKeys[1],
                                       itemType: _inventory.length > 1
                                           ? _inventory[1]
                                           : null,
@@ -3152,6 +3437,11 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                                 }
                                 return null;
                               },
+                              getRegionSymbol: (r, c) {
+                                if (_questRegions.contains((r, c))) return '!';
+                                if (_hintRegions.contains((r, c))) return '?';
+                                return null;
+                              },
                               unlockFadeDuration:
                                   widget.regionUnlockFadeDuration,
                               planeOffset: _planeOffset,
@@ -3192,10 +3482,147 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                 },
               ),
             ),
+
+            // 3. Flying Item Overlays
+              for (final flight in _activeItemFlights)
+                _buildFlyingItemOverlay(
+                  flight: flight,
+                  virtualWidth: virtualWidth,
+                  virtualHeight: virtualHeight,
+                  safePadding: MediaQuery.of(context).padding,
+                  isHorizontal: availableWidth > availableHeight,
+                  totalTileSize: totalTileSize,
+                  cellGap: cellGap,
+                  paddingAmount: paddingAmount,
+                  borderWidth: borderWidth,
+                  panelGap: panelGap,
+                ),
             ],
           );
         },
       ),
+    );
+  }
+
+  Offset _getSlotFallbackCenter(
+    int slotIndex,
+    double virtualWidth,
+    double virtualHeight,
+    EdgeInsets safePadding,
+    bool isHorizontal,
+  ) {
+    if (!isHorizontal) {
+      final x0 = safePadding.left +
+          MinesweeperConfig.headerCornerPadding +
+          (MinesweeperConfig.headerButtonSize / 2.0);
+      final y0 = virtualHeight -
+          safePadding.bottom -
+          MinesweeperConfig.headerControlTop -
+          (MinesweeperConfig.headerButtonSize / 2.0);
+      if (slotIndex == 0) {
+        return Offset(x0, y0);
+      } else {
+        return Offset(x0 + MinesweeperConfig.headerButtonSize + 8.0, y0);
+      }
+    } else {
+      final x0 = safePadding.left +
+          MinesweeperConfig.headerCornerPadding +
+          (MinesweeperConfig.headerButtonSize / 2.0);
+      final y1 = virtualHeight -
+          safePadding.bottom -
+          MinesweeperConfig.headerCornerPadding -
+          (MinesweeperConfig.headerButtonSize / 2.0);
+      final y0 = y1 - MinesweeperConfig.headerButtonSize - 8.0;
+      if (slotIndex == 0) {
+        return Offset(x0, y0);
+      } else {
+        return Offset(x0, y1);
+      }
+    }
+  }
+
+  Widget _buildFlyingItemOverlay({
+    required ActiveItemFlightData flight,
+    required double virtualWidth,
+    required double virtualHeight,
+    required EdgeInsets safePadding,
+    required bool isHorizontal,
+    required double totalTileSize,
+    required double cellGap,
+    required double paddingAmount,
+    required double borderWidth,
+    required double panelGap,
+  }) {
+    final activeGridWidth = widget.regionCols * totalTileSize;
+    final activeGridHeight = widget.regionRows * totalTileSize;
+    final panelWidth =
+        activeGridWidth + (paddingAmount * 2) + (borderWidth * 2);
+    final panelHeight =
+        activeGridHeight + (paddingAmount * 2) + (borderWidth * 2);
+
+    final strideX = panelWidth + panelGap;
+    final strideY = panelHeight + panelGap;
+
+    final originX = (virtualWidth - panelWidth) / 2.0;
+    final originY = (virtualHeight - panelHeight) / 2.0;
+
+    final dc = flight.regionC - _currentRegionCol;
+    final dr = flight.regionR - _currentRegionRow;
+
+    final panelLeft = originX + (dc * strideX) + _planeOffset.dx;
+    final panelTop = originY + (dr * strideY) + _planeOffset.dy;
+
+    final cellCenterX = panelLeft +
+        paddingAmount +
+        borderWidth +
+        (flight.localC * totalTileSize) +
+        (totalTileSize / 2);
+    final cellCenterY = panelTop +
+        paddingAmount +
+        borderWidth +
+        (flight.localR * totalTileSize) +
+        (totalTileSize / 2);
+    final startOffset = Offset(cellCenterX, cellCenterY);
+
+    Offset? targetOffset;
+    if (flight.targetSlot != null) {
+      final slotKey = _inventorySlotKeys[flight.targetSlot!];
+      final renderBox =
+          slotKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null && renderBox.hasSize && mounted) {
+        final globalCenter = renderBox.localToGlobal(
+          Offset(renderBox.size.width / 2, renderBox.size.height / 2),
+        );
+        final rootBox = context.findRenderObject() as RenderBox?;
+        targetOffset = rootBox != null
+            ? rootBox.globalToLocal(globalCenter)
+            : globalCenter;
+      } else {
+        targetOffset = _getSlotFallbackCenter(
+          flight.targetSlot!,
+          virtualWidth,
+          virtualHeight,
+          safePadding,
+          isHorizontal,
+        );
+      }
+    }
+
+    return FlyingItemOverlayWidget(
+      key: flight.id,
+      flight: flight,
+      startPosition: startOffset,
+      targetSlotPosition: targetOffset,
+      onCompleted: () {
+        if (!mounted) return;
+        setState(() {
+          if (flight.targetSlot != null) {
+            _reservedInventorySlots.remove(flight.targetSlot);
+            _inventory[flight.targetSlot!] = flight.itemType;
+          }
+          _activeItemFlights.remove(flight);
+        });
+      },
     );
   }
 }

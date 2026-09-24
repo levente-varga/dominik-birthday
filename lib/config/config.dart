@@ -171,6 +171,27 @@ class MinesweeperConfig extends BaseGameConfig {
   static double Function(int rank) biomeSpawnChanceForRankFunction =
       biomeSpawnChanceForRank;
 
+  /// Probability of an item spawning in a region of a given [rank] (0.0 to 1.0).
+  /// The likelihood of an item spawning in a region increases by rank.
+  static double itemSpawnChanceForRank(int rank) {
+    if (rank <= 0) return 0.0;
+    return (0.10 + rank * 0.10).clamp(0.0, 0.85);
+  }
+
+  /// Pluggable function to determine item spawn chance based on rank.
+  static double Function(int rank) itemSpawnChanceForRankFunction =
+      itemSpawnChanceForRank;
+
+  /// Calculates center-weighted probability score for cell at ([lr], [lc]) in a region of size ([rows], [cols]).
+  /// Cells closer to the center receive higher weight, while any cell has > 0 weight.
+  static double centerWeightedCellScore(int lr, int lc, int rows, int cols) {
+    final centerR = (rows - 1) / 2.0;
+    final centerC = (cols - 1) / 2.0;
+    final dist = math.sqrt(math.pow(lr - centerR, 2) + math.pow(lc - centerC, 2));
+    final maxDist = math.sqrt(math.pow(centerR, 2) + math.pow(centerC, 2));
+    return (maxDist - dist + 0.5);
+  }
+
   /// Pluggable function to determine the rank of a region.
   /// Defaults to [calculateRegionRank].
   static int Function(
@@ -367,6 +388,7 @@ class MinesweeperConfig extends BaseGameConfig {
   static const Color diagonalBiomeBorderColor = Color(0xFF00BCD4); // Cyan
   static const Color orthogonalBiomeBorderColor = Color(0xFFFFA726); // Amber/Orange
   static const Color rangeBiomeBorderColor = Color(0xFF66BB6A); // Green
+  static const Color blindBiomeBorderColor = Color(0xFF42A5F5); // Blue (Material Blue 400)
 
   static Color? biomeBorderColor(BiomeType biome) {
     switch (biome) {
@@ -380,6 +402,8 @@ class MinesweeperConfig extends BaseGameConfig {
         return orthogonalBiomeBorderColor;
       case BiomeType.range:
         return rangeBiomeBorderColor;
+      case BiomeType.blind:
+        return blindBiomeBorderColor;
       case BiomeType.regular:
         return null;
     }
@@ -431,6 +455,18 @@ class MinesweeperConfig extends BaseGameConfig {
 
   /// Whether continuous idle border pulsing should repeat indefinitely in test environments
   static const bool enableContinuousIdlePulseInTests = false;
+
+  /// Whether continuous sparkles should repeat indefinitely in test environments
+  static const bool enableContinuousSparklesInTests = false;
+
+  /// Duration an item rests on the uncovered cell before flying or vanishing
+  static const Duration itemAppearanceDelay = Duration(milliseconds: 500);
+
+  /// Duration of item flight from cell to inventory slot
+  static const Duration itemFlightDuration = Duration(milliseconds: 600);
+
+  /// Duration of item scale-up and fade-out when inventory is full
+  static const Duration itemVanishDuration = Duration(milliseconds: 800);
 
   /// Selected region regular border color (alias for backward compatibility)
   static const Color selectedRegularBorderColor = firstIterationRegularBorderColor;

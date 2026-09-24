@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import '../../config/config.dart';
+import 'inventory.dart';
+import 'region_sparkles.dart';
 
 // ── Dynamic Region Data Model ───────────────────────────────────────────────
 
@@ -14,6 +16,11 @@ class RegionData {
   final BiomeType biome;
   final int randomOffset;
   final Set<int> hiddenNumberIndices = {};
+  bool hasChest;
+  int? chestCellIndex;
+  bool chestOpened;
+  InventoryItemType? itemType;
+  List<SparkleParticle>? sparkleParticles;
   late final Uint8List mines; // 1 = mine, 0 = safe
   late final Uint8List cellStates; // CellState values
   late final Uint8List adjacent; // cached adjacent mine counts (255 = uncomputed)
@@ -33,7 +40,16 @@ class RegionData {
     int? rank,
     BiomeType? biome,
     int? randomOffset,
-  })  : rank = rank ?? MinesweeperConfig.rankForRegion(r, c),
+    bool? hasChest,
+    int? chestCellIndex,
+    bool chestOpened = false,
+    this.itemType,
+    int? itemCellIndex,
+    bool itemFound = false,
+  })  : chestCellIndex = chestCellIndex ?? itemCellIndex,
+        chestOpened = chestOpened || itemFound,
+        hasChest = hasChest ?? (itemType != null || (chestCellIndex ?? itemCellIndex) != null),
+        rank = rank ?? MinesweeperConfig.rankForRegion(r, c),
         biome = biome ?? BiomeType.regular,
         randomOffset = randomOffset ??
             ((biome ?? BiomeType.regular) == BiomeType.random
@@ -53,6 +69,12 @@ class RegionData {
   int get safeCells => (rows * cols) - mineCount;
   bool get allSafeRevealed => revealedCount >= safeCells;
   bool get isBiomeRevealed => revealedCount > 0;
+  bool get hasUnopenedChest => hasChest && !chestOpened;
+  bool get hasItem => hasUnopenedChest;
+  int? get itemCellIndex => chestCellIndex;
+  set itemCellIndex(int? val) => chestCellIndex = val;
+  bool get itemFound => chestOpened;
+  set itemFound(bool val) => chestOpened = val;
 
   /// Returns the number displayed to the player.
   /// For cells in a Random biome, numbers (> 0) are offset by [randomOffset].

@@ -25,6 +25,7 @@ class RegionMiniMapSelector extends StatefulWidget {
   final bool Function(int r, int c)? isRegionAccessible;
   final bool Function(int r, int c)? isRegionUnknownBiome;
   final Color? Function(int r, int c)? getRegionBiomeBorderColor;
+  final String? Function(int r, int c)? getRegionSymbol;
   final Duration unlockFadeDuration;
   final Offset planeOffset;
   final double strideX;
@@ -59,6 +60,7 @@ class RegionMiniMapSelector extends StatefulWidget {
     this.isRegionAccessible,
     this.isRegionUnknownBiome,
     this.getRegionBiomeBorderColor,
+    this.getRegionSymbol,
     this.unlockFadeDuration = MinesweeperConfig.regionUnlockFadeDuration,
     this.planeOffset = Offset.zero,
     this.strideX = 1.0,
@@ -563,7 +565,20 @@ class _RegionMiniMapSelectorState extends State<RegionMiniMapSelector>
                   ),
                 ),
               )
-            : null,
+            : (widget.getRegionSymbol?.call(r, c) != null
+                ? Center(
+                    child: Text(
+                      widget.getRegionSymbol!(r, c)!,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: widget.getRegionSymbol!(r, c) == '!'
+                            ? Colors.amberAccent
+                            : const Color(0xFFCE93D8),
+                      ),
+                    ),
+                  )
+                : null),
       ),
     );
   }

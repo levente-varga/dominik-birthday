@@ -19,6 +19,8 @@ class _RegionCellWidget extends StatefulWidget {
   final Color touchHighlightColor;
   final Duration touchHighlightFadeDuration;
   final Color? biomeColor;
+  final bool hasChest;
+  final bool isChestOpened;
 
   const _RegionCellWidget({
     required this.cellState,
@@ -32,6 +34,8 @@ class _RegionCellWidget extends StatefulWidget {
     this.backgroundOpacity = 1.0,
     this.contentOpacity = 1.0,
     this.biomeColor,
+    this.hasChest = false,
+    this.isChestOpened = false,
     this.onTap,
     this.onLongPress,
     this.longTapDuration = MinesweeperConfig.longTapDuration,
@@ -354,6 +358,36 @@ class _RegionCellWidgetState extends State<_RegionCellWidget> {
         Icons.brightness_7_rounded,
         size: 20,
         color: Colors.black,
+      );
+    }
+
+    if (widget.hasChest &&
+        !widget.isChestOpened &&
+        (widget.cellState == CellState.revealed ||
+            widget.cellState == CellState.hiddenNumber)) {
+      return Container(
+        key: const ValueKey('cell_chest_icon'),
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: Colors.amber.shade900.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: Colors.amber.shade400,
+            width: 1.2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.amber.withValues(alpha: 0.4),
+              blurRadius: 4,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.inventory_2_rounded,
+          size: 16,
+          color: Colors.amber.shade300,
+        ),
       );
     }
 
