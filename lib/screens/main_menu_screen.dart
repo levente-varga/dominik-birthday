@@ -36,14 +36,7 @@ class MainMenuScreen extends StatefulWidget {
 
 class _MainMenuScreenState extends State<MainMenuScreen> {
   bool _isDevMode = false;
-  static const bool displayPhotos = true;
   final GlobalKey<_KeyBoardState> _keyBoardKey = GlobalKey<_KeyBoardState>();
-
-  static final List<String> _dominikImages = [
-    for (int i = 1; i <= 72; i++) 'assets/images/dominik$i.jpg',
-  ];
-  static String? _lastShownDominikImage;
-  late String _currentDominikImage;
   int _konamiIndex = 0;
   Timer? _konamiTimer;
   bool _konamiClickWindowActive = false;
@@ -65,7 +58,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   void initState() {
     super.initState();
     _isDevMode = widget.gameState.isDevMode;
-    _currentDominikImage = _pickDominikImage();
     HardwareKeyboard.instance.addHandler(_handleKonamiKey);
   }
 
@@ -147,20 +139,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     }
   }
 
-  String _pickDominikImage([String? current]) {
-    final previous = current ?? _lastShownDominikImage;
-    if (widget.gameState.statistics.totalRunsStarted == 0 && previous == null) {
-      _lastShownDominikImage = 'assets/images/dominik1.jpg';
-      return 'assets/images/dominik1.jpg';
-    }
-    final candidates = previous != null
-        ? _dominikImages.where((img) => img != previous).toList()
-        : _dominikImages;
-    if (candidates.isEmpty) return _dominikImages.first;
-    final chosen = candidates[math.Random().nextInt(candidates.length)];
-    _lastShownDominikImage = chosen;
-    return chosen;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -508,49 +486,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                           ],
                         ),
 
-                        const SizedBox(height: 24),
-
-                        if (displayPhotos)
-                          // ── Central Square Container ────────────────────────
-                          GestureDetector(
-                            onTap: _isDevMode
-                                ? () {
-                                    setState(() {
-                                      _currentDominikImage =
-                                          _pickDominikImage(_currentDominikImage);
-                                    });
-                                  }
-                                : null,
-                            child: SizedBox(
-                              width: 240,
-                              height: 240,
-                              child: Stack(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: EmbeddedAssets.getImage(
-                                      _currentDominikImage,
-                                      width: 240,
-                                      height: 240,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  ),
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(16),
-                                        border: Border.all(
-                                          color: AppColors.outlineDim,
-                                          width: 1.5,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
                         const Spacer(flex: 2),
 
                         const SizedBox(height: 48),
@@ -733,11 +668,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 
   void _startRun(BuildContext context) async {
     await Navigator.of(context).pushNamed('/run');
-    if (mounted) {
-      setState(() {
-        _currentDominikImage = _pickDominikImage(_currentDominikImage);
-      });
-    }
   }
 
   void _openSkillTree(BuildContext context) {
@@ -765,11 +695,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       '/practice',
       arguments: {'stageNumber': stageNumber, 'isDevMode': _isDevMode},
     );
-    if (mounted) {
-      setState(() {
-        _currentDominikImage = _pickDominikImage(_currentDominikImage);
-      });
-    }
   }
 
   void _confirmDeleteAll(BuildContext context) {
