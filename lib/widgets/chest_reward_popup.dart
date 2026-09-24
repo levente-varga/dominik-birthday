@@ -116,10 +116,9 @@ class ChestRewardPopup extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'TREASURE CHEST',
+                          'Treasure Chest',
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 1.5,
                             color: Colors.amber.shade300,
                           ),
                         ),
@@ -251,7 +250,6 @@ class _ChestOptionCardState extends State<_ChestOptionCard> {
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 1.0,
                     color: opt.accentColor,
                   ),
                 ),
@@ -328,10 +326,9 @@ class _ChestOptionCardState extends State<_ChestOptionCard> {
                     elevation: _isHovered ? 4 : 0,
                   ),
                   child: const Text(
-                    'CLAIM',
+                    'Claim',
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
-                      letterSpacing: 1.0,
                     ),
                   ),
                 ),

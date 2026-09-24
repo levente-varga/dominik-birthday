@@ -225,7 +225,7 @@ void main() {
       expect(region.hasItem, isFalse);
 
       // Close popup by picking option
-      await tester.tap(find.text('CLAIM').first);
+      await tester.tap(find.text('Claim').first);
       await tester.pumpAndSettle();
 
       // Sparkles layer is removed / inactive
@@ -591,10 +591,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsOneWidget);
-      expect(find.text('CLAIM'), findsNWidgets(2));
+      expect(find.text('Claim'), findsNWidgets(2));
 
       // Dismiss popup by claiming first reward option
-      await tester.tap(find.text('CLAIM').first);
+      await tester.tap(find.text('Claim').first);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsNothing);
 
@@ -787,11 +787,11 @@ void main() {
 
       // Popup is now displayed with 2 unique options
       expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsOneWidget);
-      expect(find.text('TREASURE CHEST'), findsOneWidget);
-      expect(find.text('CLAIM'), findsNWidgets(2));
+      expect(find.text('Treasure Chest'), findsOneWidget);
+      expect(find.text('Claim'), findsNWidgets(2));
 
       // Claim one of the options
-      await tester.tap(find.text('CLAIM').first);
+      await tester.tap(find.text('Claim').first);
       await tester.pumpAndSettle();
 
       // Popup dismissed
@@ -838,11 +838,11 @@ void main() {
 
       // Popup is displayed
       expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsOneWidget);
-      expect(find.text('TREASURE CHEST'), findsOneWidget);
-      expect(find.text('CLAIM'), findsNWidgets(2));
+      expect(find.text('Treasure Chest'), findsOneWidget);
+      expect(find.text('Claim'), findsNWidgets(2));
 
       // Dismiss
-      await tester.tap(find.text('CLAIM').last);
+      await tester.tap(find.text('Claim').last);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsNothing);
     });
