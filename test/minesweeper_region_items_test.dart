@@ -735,5 +735,116 @@ void main() {
 
       expect(state.activeBoonRankBonus, equals(1));
     });
+
+    testWidgets('Top bar chest test button is positioned left of pause button and opens chest popup', (tester) async {
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final game = MinesweeperGame(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        isInfiniteWorld: false,
+        enableContinuousSparklesInTests: false,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => game.buildGame(
+                context: context,
+                onComplete: () {},
+                onFail: () {},
+                gameState: gameState,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final testButtonFinder = find.byKey(const ValueKey('region_chest_test_button'));
+      final pauseButtonFinder = find.byKey(const ValueKey('region_pause_button'));
+
+      expect(testButtonFinder, findsOneWidget);
+      expect(pauseButtonFinder, findsOneWidget);
+
+      // Verify test button is to the left of the pause button
+      final testButtonPos = tester.getTopLeft(testButtonFinder);
+      final pauseButtonPos = tester.getTopLeft(pauseButtonFinder);
+      expect(testButtonPos.dx, lessThan(pauseButtonPos.dx));
+
+      // Initially no popup
+      expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsNothing);
+
+      // Tap test button
+      await tester.tap(testButtonFinder);
+      await tester.pumpAndSettle();
+
+      // Popup is now displayed with 2 unique options
+      expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsOneWidget);
+      expect(find.text('TREASURE CHEST'), findsOneWidget);
+      expect(find.text('CLAIM'), findsNWidgets(2));
+
+      // Claim one of the options
+      await tester.tap(find.text('CLAIM').first);
+      await tester.pumpAndSettle();
+
+      // Popup dismissed
+      expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsNothing);
+    });
+
+    testWidgets('Top bar chest test button works in landscape mode', (tester) async {
+      tester.view.physicalSize = const Size(1000, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final game = MinesweeperGame(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        isInfiniteWorld: false,
+        enableContinuousSparklesInTests: false,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => game.buildGame(
+                context: context,
+                onComplete: () {},
+                onFail: () {},
+                gameState: gameState,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final testButtonFinder = find.byKey(const ValueKey('region_chest_test_button'));
+      expect(testButtonFinder, findsOneWidget);
+
+      // Tap test button in landscape
+      await tester.tap(testButtonFinder);
+      await tester.pumpAndSettle();
+
+      // Popup is displayed
+      expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsOneWidget);
+      expect(find.text('TREASURE CHEST'), findsOneWidget);
+      expect(find.text('CLAIM'), findsNWidgets(2));
+
+      // Dismiss
+      await tester.tap(find.text('CLAIM').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chest_reward_popup_container')), findsNothing);
+    });
   });
 }

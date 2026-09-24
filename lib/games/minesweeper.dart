@@ -340,6 +340,9 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
   }
 
   @visibleForTesting
+  void openTestChest() => _openTestChest();
+
+  @visibleForTesting
   Set<(int, int)> get questRegions => _questRegions;
 
   @visibleForTesting
@@ -1432,6 +1435,34 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
     setState(() {
       region.chestOpened = true;
       region.sparkleParticles = null;
+    });
+
+    final options = ChestRewardOption.generateTwoUniqueOptions(
+      _rng,
+      currentRegion: (region.r, region.c),
+      rank: region.rank,
+    );
+
+    showChestRewardPopup(
+      context,
+      options: options,
+      onSelected: (chosen) {
+        _applyChestReward(chosen, region, cellIndex);
+      },
+    );
+  }
+
+  void _openTestChest() {
+    HapticFeedback.heavyImpact();
+    final region = _getOrInitRegion(_currentRegionRow, _currentRegionCol);
+    final cellIndex = region.chestCellIndex ??
+        (widget.regionRows ~/ 2 * widget.regionCols + widget.regionCols ~/ 2);
+
+    setState(() {
+      if (region.hasChest && !region.chestOpened) {
+        region.chestOpened = true;
+        region.sparkleParticles = null;
+      }
     });
 
     final options = ChestRewardOption.generateTwoUniqueOptions(
@@ -2974,7 +3005,7 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
 
                   final headerWidth = min(minViewportWidth, safeWidth) -
                       (2 * MinesweeperConfig.headerCornerPadding);
-                  const minRequiredHeaderWidth = 200.0;
+                  const minRequiredHeaderWidth = 240.0;
                   final minimapScale = (!_isMinimapExpanded &&
                           availableWidth < compactWidth + 24.0)
                       ? (availableWidth / (compactWidth + 24.0))
@@ -3004,6 +3035,10 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                             () => showOptionsPopup(context)),
                   );
 
+                  final testChestButton = RegionChestTestButton(
+                    onTap: _openTestChest,
+                  );
+
                   final headerRow = Row(
                     children: [
                       Expanded(
@@ -3016,7 +3051,18 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                       Expanded(
                         child: Align(
                           alignment: Alignment.centerRight,
-                          child: pauseButton,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                testChestButton,
+                                const SizedBox(width: 8.0),
+                                pauseButton,
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -3260,7 +3306,14 @@ class _MinesweeperGameState extends State<_MinesweeperGame>
                                     Expanded(
                                       child: Align(
                                         alignment: Alignment.bottomCenter,
-                                        child: pauseButton,
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            testChestButton,
+                                            const SizedBox(height: 8.0),
+                                            pauseButton,
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ],

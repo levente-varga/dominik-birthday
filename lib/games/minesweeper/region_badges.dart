@@ -267,3 +267,46 @@ class EmptyCornerButton extends StatelessWidget {
   }
 }
 
+// ── Region Chest Test Button ──────────────────────────────────────────────────
+
+class RegionChestTestButton extends StatelessWidget {
+  final VoidCallback? onTap;
+
+  const RegionChestTestButton({
+    super.key,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        key: const ValueKey('region_chest_test_button'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          width: MinesweeperConfig.headerButtonSize,
+          height: MinesweeperConfig.headerButtonSize,
+          decoration: BoxDecoration(
+            color: AppColors.panelDim,
+            borderRadius: BorderRadius.circular(
+              MinesweeperConfig.headerControlRadius,
+            ),
+            border: Border.all(
+              color: Colors.amber.shade400.withValues(alpha: 0.6),
+              width: MinesweeperConfig.headerControlBorderWidth,
+            ),
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.inventory_2_rounded,
+            size: MinesweeperConfig.pauseButtonIconSize,
+            color: Colors.amber.shade300,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
