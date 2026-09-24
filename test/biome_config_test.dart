@@ -54,21 +54,20 @@ void main() {
       expect(BiomeConfig.isBiomeAllowed(biome: BiomeType.random, rank: 0, distance: 0), isFalse);
     });
 
-    test('Rank 1 at distance 1 only allows random biome', () {
-      final eligible = BiomeConfig.getEligibleBiomes(rank: 1, distance: 1);
+    test('Rank 1 at distance 2 only allows random biome', () {
+      final eligible = BiomeConfig.getEligibleBiomes(rank: 1, distance: 2);
       expect(eligible, equals([BiomeType.random]));
     });
 
-    test('Rank 2 at distance 2 allows random and diagonal biomes', () {
-      final eligible = BiomeConfig.getEligibleBiomes(rank: 2, distance: 2);
-      expect(eligible, containsAll([BiomeType.random, BiomeType.diagonal]));
-      expect(eligible, isNot(contains(BiomeType.orthogonal)));
+    test('Rank 2 at distance 3 allows random, diagonal, and orthogonal biomes', () {
+      final eligible = BiomeConfig.getEligibleBiomes(rank: 2, distance: 3);
+      expect(eligible, containsAll([BiomeType.random, BiomeType.diagonal, BiomeType.orthogonal]));
       expect(eligible, isNot(contains(BiomeType.unknown)));
       expect(eligible, isNot(contains(BiomeType.range)));
     });
 
-    test('Rank 5 at distance 4 allows diagonal, orthogonal, unknown, and range', () {
-      final eligible = BiomeConfig.getEligibleBiomes(rank: 5, distance: 4);
+    test('Rank 5 at distance 7 allows diagonal, orthogonal, unknown, and range', () {
+      final eligible = BiomeConfig.getEligibleBiomes(rank: 5, distance: 7);
       expect(eligible, containsAll([
         BiomeType.diagonal,
         BiomeType.orthogonal,
@@ -78,10 +77,14 @@ void main() {
       expect(eligible, isNot(contains(BiomeType.random))); // random maxRank is 4
     });
 
-    test('Rank 8 at distance 5 only allows unknown and range', () {
-      final eligible = BiomeConfig.getEligibleBiomes(rank: 8, distance: 5);
-      expect(eligible, containsAll([BiomeType.unknown, BiomeType.range]));
-      expect(eligible.length, equals(2));
+    test('Rank 8 at distance 7 allows diagonal, orthogonal, unknown, and range', () {
+      final eligible = BiomeConfig.getEligibleBiomes(rank: 8, distance: 7);
+      expect(eligible, containsAll([
+        BiomeType.diagonal,
+        BiomeType.orthogonal,
+        BiomeType.unknown,
+        BiomeType.range,
+      ]));
     });
 
     test('Distance gate blocks high-rank biomes if distance is insufficient', () {
@@ -99,7 +102,7 @@ void main() {
 
     test('pickBiome returns eligible special biome when available', () {
       final rng = Random(42);
-      final picked = BiomeConfig.pickBiome(rank: 1, distance: 1, random: rng);
+      final picked = BiomeConfig.pickBiome(rank: 1, distance: 2, random: rng);
       expect(picked, equals(BiomeType.random));
     });
 
@@ -109,17 +112,17 @@ void main() {
       const iterations = 2000;
 
       for (int i = 0; i < iterations; i++) {
-        final b = BiomeConfig.pickBiome(rank: 5, distance: 4, random: rng);
+        final b = BiomeConfig.pickBiome(rank: 5, distance: 7, random: rng);
         counts[b] = (counts[b] ?? 0) + 1;
       }
 
-      // All 4 eligible biomes (diagonal: 0.9, orthogonal: 0.8, unknown: 0.6, range: 0.5) must appear
+      // All 4 eligible biomes (diagonal: 0.8, orthogonal: 0.8, unknown: 0.6, range: 0.5) must appear
       expect(counts[BiomeType.diagonal], greaterThan(0));
       expect(counts[BiomeType.orthogonal], greaterThan(0));
       expect(counts[BiomeType.unknown], greaterThan(0));
       expect(counts[BiomeType.range], greaterThan(0));
 
-      // Higher weight biomes (diagonal: 0.9) should appear more frequently than range (0.5)
+      // Higher weight biomes (diagonal: 0.8) should appear more frequently than range (0.5)
       expect(counts[BiomeType.diagonal]!, greaterThan(counts[BiomeType.range]!));
     });
   });

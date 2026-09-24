@@ -6,12 +6,12 @@ import '../../constants/colors.dart';
 // ── Region Mine Counter Badge ────────────────────────────────────────────────
 
 class RegionMineCounterBadge extends StatelessWidget {
-  final int remainingMines;
+  final int? remainingMines;
   final bool isVertical;
 
   const RegionMineCounterBadge({
     super.key,
-    required this.remainingMines,
+    this.remainingMines,
     this.isVertical = false,
   });
 
@@ -46,7 +46,7 @@ class RegionMineCounterBadge extends StatelessWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                '$remainingMines',
+                remainingMines != null ? '$remainingMines' : '?',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontFamily: 'monospace',
@@ -86,7 +86,7 @@ class RegionMineCounterBadge extends StatelessWidget {
           ),
           const SizedBox(width: MinesweeperConfig.mineCounterGap),
           Text(
-            '$remainingMines',
+            remainingMines != null ? '$remainingMines' : '?',
             style: const TextStyle(
               fontFamily: 'monospace',
               fontSize: MinesweeperConfig.mineCounterFontSize,

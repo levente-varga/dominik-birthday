@@ -19,6 +19,9 @@ enum BiomeType {
 
   /// Range biome: numbers indicate mines from up to 2 tiles away (even into adjacent regions).
   range,
+
+  /// Blind biome: does not display the total number of bombs in it.
+  blind,
 }
 
 /// Generation rule for a biome type defining its rank range, minimum distance, and rarity weight.
@@ -96,6 +99,13 @@ class BiomeConfig {
       maxRank: 8,
       minDistanceFromStart: 7,
       weight: 0.5,
+    ),
+    BiomeType.blind: BiomeRule(
+      type: BiomeType.blind,
+      minRank: 3,
+      maxRank: 8,
+      minDistanceFromStart: 4,
+      weight: 0.7,
     ),
   };
 
