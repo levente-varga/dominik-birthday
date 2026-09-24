@@ -874,6 +874,157 @@ void main() {
       expect(randRegion.cellStates[randRegion.localIndex(4, 3)], equals(CellState.revealed));
     });
 
+    testWidgets('Random biome: chording matches displayed number (actual mines + randomOffset)', (tester) async {
+      final generator = MinesweeperWorldGenerator(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        regionsX: 5,
+        regionsY: 5,
+        isInfiniteWorld: false,
+      );
+      generator.assignedRanks[(2, 2)] = 0;
+      generator.assignedBiomes[(2, 2)] = BiomeType.regular;
+      generator.assignedRanks[(2, 3)] = 1;
+      generator.assignedBiomes[(2, 3)] = BiomeType.random;
+
+      final game = MinesweeperGame(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        lockInaccessibleRegions: false,
+        worldGenerator: generator,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => game.buildGame(
+                context: context,
+                onComplete: () {},
+                onFail: () {},
+                gameState: gameState,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final dynamic state = tester.state(
+        find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+      );
+      final Map<(int, int), dynamic> regions = state.regions;
+      final randRegion = regions[(2, 3)];
+      state.ensureRegionGenerated(2, 3);
+
+      // Clear mines and place 1 mine at (1, 1)
+      randRegion.mines.fillRange(0, randRegion.mines.length, 0);
+      randRegion.adjacent.fillRange(0, randRegion.adjacent.length, 255);
+      randRegion.mines[randRegion.localIndex(1, 1)] = 1;
+
+      // Reveal cell (2, 2). It has 1 actual mine adjacent.
+      state.reveal(2, 3, 2, 2);
+      await tester.pumpAndSettle();
+
+      final idx22 = randRegion.localIndex(2, 2);
+      final displayedNumber = randRegion.getDisplayedNumber(idx22);
+      final offset = randRegion.randomOffset;
+      expect(displayedNumber, equals(1 + offset));
+
+      // In order to chord, player must flag exactly displayedNumber neighbors!
+      // Flag the real mine at (1, 1) plus offset safe neighbors
+      state.toggleFlag(2, 3, 1, 1);
+      final extraNeighbors = [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2), (3, 3)];
+      for (int i = 0; i < offset; i++) {
+        final (r, c) = extraNeighbors[i];
+        state.toggleFlag(2, 3, r, c);
+      }
+      await tester.pumpAndSettle();
+
+      // Trigger chord on (2, 2)
+      state.handleCellTap(2, 3, 2, 2);
+      await tester.pumpAndSettle();
+
+      // The remaining unflagged neighbors should now be revealed!
+      for (int i = offset; i < extraNeighbors.length; i++) {
+        final (r, c) = extraNeighbors[i];
+        expect(randRegion.cellStates[randRegion.localIndex(r, c)], equals(CellState.revealed));
+      }
+    });
+
+    testWidgets('Blind biome: does not display the total number of bombs in it (shows ? in counter)', (tester) async {
+      final generator = MinesweeperWorldGenerator(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        regionsX: 5,
+        regionsY: 5,
+        isInfiniteWorld: false,
+      );
+      generator.assignedRanks[(2, 2)] = 1;
+      generator.assignedBiomes[(2, 2)] = BiomeType.blind;
+      generator.assignedRanks[(2, 3)] = 0;
+      generator.assignedBiomes[(2, 3)] = BiomeType.regular;
+
+      final game = MinesweeperGame(
+        initialRegionX: 2,
+        initialRegionY: 2,
+        lockInaccessibleRegions: false,
+        worldGenerator: generator,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => game.buildGame(
+                context: context,
+                onComplete: () {},
+                onFail: () {},
+                gameState: gameState,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final badgeFinder = find.byKey(const ValueKey('region_mine_counter_badge'));
+      expect(badgeFinder, findsOneWidget);
+
+      // In Blind region (2, 2), badge displays '?' instead of numeric count
+      expect(find.descendant(of: badgeFinder, matching: find.text('?')), findsOneWidget);
+
+      final dynamic state = tester.state(
+        find.byWidgetPredicate((w) => w.runtimeType.toString() == '_MinesweeperGame'),
+      );
+
+      final Map<(int, int), dynamic> regions = state.regions;
+      final blindRegion = regions[(2, 2)];
+      state.ensureRegionGenerated(2, 2);
+      expect(blindRegion.biome, equals(BiomeType.blind));
+
+      // Flag a cell in Blind region
+      state.toggleFlag(2, 2, 0, 0);
+      await tester.pumpAndSettle();
+
+      // After placing a flag, the badge continues to display '?' (count is unknown)
+      expect(find.descendant(of: badgeFinder, matching: find.text('?')), findsOneWidget);
+
+      // Unflag the cell
+      state.toggleFlag(2, 2, 0, 0);
+      await tester.pumpAndSettle();
+
+      // Navigate to regular region (2, 3)
+      state.navigateRegion(0, 1);
+      await tester.pumpAndSettle();
+
+      // In regular region, badge displays a numeric mine count (not '?')
+      expect(find.descendant(of: badgeFinder, matching: find.text('?')), findsNothing);
+
+      // Border color matches blindBiomeBorderColor
+      expect(MinesweeperConfig.biomeBorderColor(BiomeType.blind), equals(MinesweeperConfig.blindBiomeBorderColor));
+    });
+
     test('All special biomes satisfy blob size >= 2 constraint in finite grid', () {
       for (int seed = 0; seed < 10; seed++) {
         final generator = MinesweeperWorldGenerator(
@@ -917,6 +1068,7 @@ void main() {
         BiomeType.diagonal,
         BiomeType.orthogonal,
         BiomeType.range,
+        BiomeType.blind,
       ];
       for (final biome in biomes) {
         final color = MinesweeperConfig.biomeBorderColor(biome);
